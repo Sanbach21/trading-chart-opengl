@@ -91,3 +91,29 @@ class TimeScale:
         self.right_offset += bars
         self.right_offset = float(max(-50.0, min(50000.0, self.right_offset)))
         self._recalc_visible()
+
+    # dentro de charts/scales/time_scale.py (clase TimeScale)
+
+def set_viewport(self, x: float, y: float, w: float, h: float) -> None:
+    self.view_x = float(x)
+    self.view_y = float(y)
+    self.view_w = max(1.0, float(w))
+    self.view_h = max(1.0, float(h))
+
+def index_to_x(self, i: int) -> float:
+    """
+    Mapeo mínimo: cada bar ocupa (bar_px + gap_px) y se desplaza con scroll.
+    Usamos el "center index" y un offset px.
+    """
+    # Si ya tenés bar_spacing_px / scroll_px / center_index, enchufalos acá.
+    bar = getattr(self, "bar_width_px", 8.0)
+    gap = getattr(self, "bar_gap_px", 3.0)
+    step = float(bar + gap)
+
+    center = getattr(self, "center_index", 0)
+    pan = getattr(self, "pan_px", 0.0)
+
+    # x del centro del plot
+    x_mid = self.view_x + self.view_w * 0.5
+
+    return x_mid + (i - center) * step + float(pan)

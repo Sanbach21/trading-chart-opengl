@@ -12,6 +12,7 @@ C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\c
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\__init__.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\axis.py
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\chart_overlay.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\crosshair.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\grid.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\panes.py
@@ -37,6 +38,8 @@ C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\g
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\renderer.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\__init__.py
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\basic2d.frag
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\basic2d.vert
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\requirements.txt
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\trading
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\trading\__init__.py
@@ -157,12 +160,16 @@ Esta clase es el 'Core App' inicial:
 - Captura input y lo vuelca a InputState
 - Corre el loop: update -> render
 
-NOTA: Aquí todavía no existe Chart Engine. Por ahora solo validamos la base del renderer.
+NOTA: Aquí todavía no existe Chart Engine. Por ahora validamos:
+- Renderer2D en píxeles
+- TimeScale (zoom/pan)
+- ChartOverlay (layout + grid + bandas de ejes)
 """
 from __future__ import annotations
 
 import time
 import glfw
+
 from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     glClear, glClearColor, glViewport,
@@ -170,17 +177,81 @@ from OpenGL.GL import (
 )
 
 from app.input import InputState
-from render.renderer import Renderer
+from render.renderer import Renderer2D, Color
+
+from charts.scales.time_scale import TimeScale
+from charts.scales.price_scale import PriceScale
+from charts.overlays.chart_overlay import ChartOverlay
+
+
+class _OverlayRendererAdapter:
+    """
+    Adapter para que ChartOverlay pueda dibujar usando tu Renderer2D aunque
+    ChartOverlay intente pasar kwargs como color= o width=.
+    Tu Renderer2D (según tu uso) parece tener:
+      - draw_rect_px(x, y, w, h, Color)
+      - draw_line_px(x1, y1, x2, y2, Color)
+    """
+    def __init__(self, renderer: Renderer2D):
+        self._r = renderer
+
+    def _to_color(self, c):
+        if c is None:
+            return Color(1.0, 1.0, 1.0, 1.0)
+        if isinstance(c, Color):
+            return c
+        # Si viene como tuple RGBA
+        try:
+            return Color(float(c[0]), float(c[1]), float(c[2]), float(c[3]))
+        except Exception:
+            return Color(1.0, 1.0, 1.0, 1.0)
+
+    def draw_rect_px(self, x, y, w, h, color=None, **kwargs):
+        self._r.draw_rect_px(float(x), float(y), float(w), float(h), self._to_color(color))
+
+    def draw_line_px(self, x1, y1, x2, y2, width=1, color=None, **kwargs):
+        # Tu renderer no usa width en draw_line_px según tu código, lo ignoramos.
+        self._r.draw_line_px(float(x1), float(y1), float(x2), float(y2), self._to_color(color))
 
 
 class GLFWWindow:
     def __init__(self, title: str, width: int, height: int) -> None:
+        # TimeScale (pixeles)
+        self.time_scale = TimeScale(bar_spacing=10.0, right_offset=0.0)
+
+        # Dataset fake (200 barras). Por ahora solo usamos el count.
+        self.total_bars = 200
+
+        # Para pan con arrastre
+        self._dragging = False
+
         self.title = title
         self.width = width
         self.height = height
         self._window = None
         self.input = InputState()
-        self.renderer = Renderer()
+
+        self.renderer = Renderer2D()
+
+        # ----------------------------
+        # Overlay / Axes / Grid (Opción B)
+        # ----------------------------
+        self.chart_config = {
+                "price_axis": {"side": "right", "width_px": 0, "show": True},
+                "time_axis": {"height_px": 0, "show": True},
+                "grid": {"show": True, "vx": 80, "hy": 60, "line_width": 3},
+                "padding": {"left": 0, "right": 60, "top": 0, "bottom": 30},
+                "coords": {"y_down": True},  # <— activa origen arriba
+            }
+
+        # PriceScale placeholder por ahora (lo haremos real luego)
+        self.price_scale = PriceScale()
+
+        # Overlay conectado a tus escalas
+        self.overlay = ChartOverlay(self.time_scale, self.price_scale, self.chart_config)
+
+        # Adapter para evitar problemas de firma (kwargs)
+        self.overlay_renderer = _OverlayRendererAdapter(self.renderer)
 
     def _on_framebuffer_size(self, window, w: int, h: int) -> None:
         self.width = max(1, int(w))
@@ -233,7 +304,7 @@ class GLFWWindow:
             raise RuntimeError("No se pudo crear la ventana GLFW.")
 
         glfw.make_context_current(self._window)
-        glfw.swap_interval(1)  # VSync ON (lo podemos hacer configurable)
+        glfw.swap_interval(1)  # VSync ON
 
         glfw.set_framebuffer_size_callback(self._window, self._on_framebuffer_size)
         glfw.set_key_callback(self._window, self._on_key)
@@ -254,7 +325,6 @@ class GLFWWindow:
             print("Vendor:", vendor.decode() if vendor else vendor)
             print("Renderer:", renderer.decode() if renderer else renderer)
         except Exception:
-            # Algunas plataformas pueden fallar si el contexto no está listo
             pass
 
     def run(self) -> None:
@@ -268,19 +338,84 @@ class GLFWWindow:
             now = time.perf_counter()
             dt = now - last
             last = now
+            _ = dt  # reservado por si luego lo usas
 
             self.input.begin_frame()
             glfw.poll_events()
 
-            # Update (por ahora solo un ejemplo: cerrar con Q)
+            # ----------------------------
+            # Definir área base del chart
+            # ----------------------------
+            # CHART = todo el viewport (como TradingView)
+            chart_x = 0.0
+            chart_y = 0.0
+            chart_w = float(self.width)
+            chart_h = float(self.height)
+
+            self.overlay.set_view(chart_x, chart_y, chart_w, chart_h)
+            plot_x, plot_y, plot_w, plot_h = self.overlay.get_plot_rect()
+
+
+            # ----------------------------
+            # TimeScale: viewport y data (usar el plot)
+            # ----------------------------
+            # 3) Conectar scales usando el plot (no usando todo el chart)
+            self.time_scale.set_view(plot_x, plot_w)
+            self.time_scale.set_total_bars(self.total_bars)
+            # Cuando implementemos PriceScale:
+            # self.price_scale.set_viewport(plot_x, plot_y, plot_w, plot_h)
+
+            # --- Zoom con rueda ---
+            if self.input.mouse.scroll_y != 0.0:
+                self.time_scale.zoom_at_x(self.input.mouse.x, self.input.mouse.scroll_y)
+
+            # --- Pan con arrastre (mouse left) ---
+            if self.input.mouse.left and not self._dragging:
+                self._dragging = True
+            if not self.input.mouse.left and self._dragging:
+                self._dragging = False
+
+            if self._dragging and self.input.mouse.dx != 0.0:
+                # dx positivo (mueves mouse a la derecha) => ver historial (más viejo)
+                self.time_scale.pan_by_pixels(self.input.mouse.dx)
+
+            # Update (por ahora solo ejemplo: cerrar con Q)
             if self.input.is_key_down(glfw.KEY_Q):
                 glfw.set_window_should_close(self._window, True)
 
+            # ----------------------------
             # Render
+            # ----------------------------
             glClearColor(0.06, 0.07, 0.09, 1.0)
             glClear(GL_COLOR_BUFFER_BIT)
-            self.renderer.draw()
 
+            self.renderer.begin_frame(self.width, self.height)
+
+            # Fondo TOTAL del chart (ventana completa)
+            self.renderer.draw_rect_px(
+                                        0.0, 0.0,
+                                        float(self.width), float(self.height),
+                                        Color(0.5, 0.5, 0.5, 0.5)
+                                       )
+            
+            self.renderer.begin_frame(self.width, self.height)  
+            self.renderer.draw_line_px(100, 100, 200, 200, Color(1.0, 0.0, 0.0, 1.0))  # Línea roja de prueba  
+            self.renderer.end_frame()
+
+
+            # 1) Overlay (grid + bandas de ejes)
+            self.overlay.draw(self.overlay_renderer)
+
+            # 3) Dibujar “peine” de barras verticales dentro del plot usando TimeScale
+            # vr = self.time_scale.get_visible_range()
+            # for i in range(vr.start, vr.end + 1):
+            #     x = self.time_scale.index_to_x(i)
+            #     self.renderer.draw_line_px(
+            #         x, plot_y, x, plot_y + plot_h,
+            #         Color(0.25, 0.35, 0.55, 0.8)
+            #     )
+
+            self.renderer.end_frame()
             glfw.swap_buffers(self._window)
 
         self.shutdown()
@@ -331,6 +466,278 @@ from __future__ import annotations
 class AxisOverlay:
     def __init__(self) -> None:
         pass
+
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\chart_overlay.py
+================================================================================
+# charts/overlays/chart_overlay.py
+from dataclasses import dataclass
+from typing import Dict, Tuple, Any
+
+Rect = Tuple[float, float, float, float]  # (x, y, w, h)
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return lo if v < lo else hi if v > hi else v
+
+
+def _merge_defaults(user_cfg: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge shallow + one-level nested dicts, so user cfg overrides defaults."""
+    out = dict(defaults)
+    for k, v in (user_cfg or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            tmp = dict(out[k])
+            tmp.update(v)
+            out[k] = tmp
+        else:
+            out[k] = v
+    return out
+
+
+@dataclass
+class OverlayLayout:
+    chart_rect: Rect
+    plot_rect: Rect
+    price_axis_rect: Rect
+    time_axis_rect: Rect
+
+
+class ChartOverlay:
+    """
+    ChartOverlay = layout + grid + ejes (bandas).
+    NO dibuja series (velas/lineas).
+    """
+
+    DEFAULT_CONFIG = {
+        "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
+        "price_axis": {"show": True, "side": "right", "width_px": 90, "separator_width": 1},
+        "time_axis": {"show": True, "height_px": 44, "separator_width": 1},
+        "grid": {"show": True, "vx": 80, "hy": 20, "line_width": 5},
+        "colors": {
+            "grid": (0.10, 0.70, 0.05, 0.50),
+            "axis_band": (1.0, 1.0, 0.0, 1.0),
+            "axis_separator": (0.5, 0.5, 0.5, 1.0),
+        },
+        "coords": {"y_down": False},  # origen arriba si True (típico UI)
+    }
+
+    def __init__(self, time_scale, price_scale, config: Dict[str, Any] = None):
+        self.time_scale = time_scale
+        self.price_scale = price_scale
+        self.config = _merge_defaults(config or {}, self.DEFAULT_CONFIG)
+        self._x = self._y = self._w = self._h = 0.0
+        self._layout: OverlayLayout | None = None
+        self._y_down = bool(self.config["coords"].get("y_down", False))
+
+    # ----------------------------
+    # Public API
+    # ----------------------------
+    def set_view(self, x: float, y: float, w: float, h: float) -> None:
+        """Define el rect del chart (área total asignada)."""
+        self._x, self._y, self._w, self._h = float(x), float(y), float(w), float(h)
+        self._layout = None  # invalidate
+
+    def get_layout(self) -> OverlayLayout:
+        """Devuelve layout calculado (cacheado)."""
+        if self._layout is None:
+            self._layout = self._compute_layout()
+
+            # Conectamos escalas al PLOT (no al chart completo)
+            px, py, pw, ph = self._layout.plot_rect
+
+            # TimeScale en tu engine usa set_view(x, w)
+            if hasattr(self.time_scale, "set_view"):
+                self.time_scale.set_view(px, pw)
+
+            # PriceScale debería tener set_viewport(x, y, w, h)
+            if hasattr(self.price_scale, "set_viewport"):
+                self.price_scale.set_viewport(px, py, pw, ph)
+
+        return self._layout
+
+    def get_plot_rect(self) -> Rect:
+        """Devuelve el rectángulo del área de plot (sin ejes)."""
+        return self.get_layout().plot_rect
+
+    def draw(self, renderer) -> None:
+        """Dibuja overlay: grid + bandas de ejes."""
+        layout = self.get_layout()
+
+        if self.config["grid"]["show"]:
+            self._draw_grid(renderer, layout.plot_rect)
+
+        # Bandas y separadores de ejes
+        if self.config["price_axis"]["show"]:
+            self._draw_price_axis_band(renderer, layout.price_axis_rect, layout.plot_rect)
+
+        if self.config["time_axis"]["show"]:
+            self._draw_time_axis_band(renderer, layout.time_axis_rect, layout.plot_rect)
+
+    # ----------------------------
+    # Layout
+    # ----------------------------
+    def _compute_layout(self) -> OverlayLayout:
+        pad = self.config["padding"]
+        px_l, px_r = float(pad["left"]), float(pad["right"])
+        px_t, px_b = float(pad["top"]), float(pad["bottom"])
+
+        chart_rect: Rect = (self._x, self._y, self._w, self._h)
+
+        # Padding vertical según sistema de coordenadas
+        if self._y_down:
+            # Origen arriba: y crece hacia abajo → el "top" empuja hacia abajo
+            inner_x = self._x + px_l
+            inner_y = self._y + px_t
+            inner_w = max(0.0, self._w - (px_l + px_r))
+            inner_h = max(0.0, self._h - (px_t + px_b))
+        else:
+            # Origen abajo: y crece hacia arriba (comportamiento original)
+            inner_x = self._x + px_l
+            inner_y = self._y + px_b
+            inner_w = max(0.0, self._w - (px_l + px_r))
+            inner_h = max(0.0, self._h - (px_t + px_b))
+
+        pa, ta = self.config["price_axis"], self.config["time_axis"]
+        price_axis_w = float(pa["width_px"]) if pa["show"] else 0.0
+        time_axis_h = float(ta["height_px"]) if ta["show"] else 0.0
+
+        # Layout vertical (plot vs time axis) según sistema
+        if self._y_down:
+            # y-down: el time-axis "abajo" está en el borde inferior (mayor y)
+            plot_y = inner_y
+            plot_h = max(0.0, inner_h - time_axis_h)
+            time_y = inner_y + plot_h
+            time_axis_rect: Rect = (
+                (inner_x, time_y, inner_w, time_axis_h) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
+            )
+        else:
+            # y-up: el time-axis "abajo" empieza en inner_y
+            plot_h = max(0.0, inner_h - time_axis_h)
+            plot_y = inner_y + time_axis_h
+            time_axis_rect: Rect = (
+                (inner_x, inner_y, inner_w, time_axis_h) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
+            )
+
+        # Layout horizontal (plot vs price axis)
+        side = (pa["side"] or "right").lower()
+        if pa["show"] and side == "left":
+            price_axis_rect: Rect = (inner_x, plot_y, price_axis_w, plot_h)
+            plot_rect: Rect = (inner_x + price_axis_w, plot_y, max(0.0, inner_w - price_axis_w), plot_h)
+        else:
+            plot_rect: Rect = (inner_x, plot_y, max(0.0, inner_w - price_axis_w), plot_h)
+            price_axis_rect: Rect = (
+                (inner_x + plot_rect[2], plot_y, price_axis_w, plot_h) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
+            )
+
+        return OverlayLayout(
+            chart_rect=chart_rect,
+            plot_rect=plot_rect,
+            price_axis_rect=price_axis_rect,
+            time_axis_rect=time_axis_rect,
+        )
+
+    # ----------------------------
+    # Drawing helpers (renderer-agnostic)
+    # ----------------------------
+    def _draw_rect(self, renderer, rect: Rect, color=None) -> None:
+        """Dibuja un rect de fondo si el renderer lo soporta."""
+        x, y, w, h = rect
+        if w <= 0 or h <= 0:
+            return
+
+        if hasattr(renderer, "draw_rect_px"):
+            try:
+                renderer.draw_rect_px(x, y, w, h, color=color)
+            except TypeError:
+                renderer.draw_rect_px(x, y, w, h)
+        elif hasattr(renderer, "rect"):
+            try:
+                renderer.rect(x, y, w, h, color=color)
+            except TypeError:
+                renderer.rect(x, y, w, h)
+
+    def _draw_line(self, renderer, x1, y1, x2, y2, width=1, color=None) -> None:
+        """Dibuja línea si el renderer lo soporta."""
+        if hasattr(renderer, "draw_line_px"):
+            try:
+                renderer.draw_line_px(x1, y1, x2, y2, color=color, width=width)
+            except TypeError:
+                renderer.draw_line_px(x1, y1, x2, y2, color)
+        elif hasattr(renderer, "line"):
+            try:
+                renderer.line(x1, y1, x2, y2, color=color, width=width)
+            except TypeError:
+                renderer.line(x1, y1, x2, y2, color)
+
+    # ----------------------------
+    # Grid / Axis bands
+    # ----------------------------
+    def _draw_grid(self, renderer, plot_rect: Rect) -> None:
+       
+        """Dibuja la cuadrícula principal dentro del área de plot."""
+        x, y, w, h = plot_rect
+        if w <= 0 or h <= 0:
+            return
+
+        grid_cfg = self.config["grid"]
+        step_x = max(10.0, float(grid_cfg["vx"]))
+        step_y = max(10.0, float(grid_cfg["hy"]))
+        lw = max(1, int(grid_cfg["line_width"]))
+        col = self.config["colors"]["grid"]
+
+        # Vertical lines
+        gx = x
+        while gx <= x + w:
+            print(f"Vertical line width: {lw}")  # Imprimir el grosor para ver qué se está usando
+            self._draw_line(renderer, gx, y, gx, y + h, width=lw, color=col)
+            gx += step_x
+
+        # Horizontal lines
+        gy = y
+        while gy <= y + h:
+            self._draw_line(renderer, x, gy, x + w, gy, width=lw, color=col)
+            gy += step_y
+
+    def _draw_price_axis_band(self, renderer, axis_rect: Rect, plot_rect: Rect) -> None:
+        """Dibuja la banda y separador del eje de precios."""
+        band_col = self.config["colors"]["axis_band"]
+        sep_col = self.config["colors"]["axis_separator"]
+        pa = self.config["price_axis"]
+        sep_w = max(1, int(pa["separator_width"]))
+
+        self._draw_rect(renderer, axis_rect, color=band_col)
+
+        # Separador entre plot y eje
+        ax, ay, aw, ah = axis_rect
+        px, py, pw, ph = plot_rect
+        side = pa["side"].lower()
+
+        if side == "left":
+            x_sep = ax + aw
+            self._draw_line(renderer, x_sep, py, x_sep, py + ph, width=sep_w, color=sep_col)
+        else:
+            x_sep = ax
+            self._draw_line(renderer, x_sep, py, x_sep, py + ph, width=sep_w, color=sep_col)
+
+    def _draw_time_axis_band(self, renderer, axis_rect: Rect, plot_rect: Rect) -> None:
+        """Dibuja la banda inferior y el separador horizontal del eje de tiempo."""
+        band_col = self.config["colors"]["axis_band"]
+        sep_col = self.config["colors"]["axis_separator"]
+        ta = self.config["time_axis"]
+        sep_w = max(1, int(ta["separator_width"]))
+
+        self._draw_rect(renderer, axis_rect, color=band_col)
+
+        # Separador entre plot y time axis
+        tx, ty, tw, th = axis_rect
+        px, py, pw, ph = plot_rect
+
+        if self._y_down:
+            y_sep = ty  # borde superior de la banda
+        else:
+            y_sep = ty + th  # borde superior cuando y-up
+
+        self._draw_line(renderer, px, y_sep, px + pw, y_sep, width=sep_w, color=sep_col)
 
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\crosshair.py
@@ -405,12 +812,91 @@ Objetivo:
 - visible_range (bar index start/end)
 - spacing/zoom centrado en cursor
 """
+
+# python
 from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass
+class VisibleRange:
+    start: int
+    end: int
 
 
 class TimeScale:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, bar_spacing: float = 10.0, right_offset: float = 0.0) -> None:
+        self.bar_spacing = float(bar_spacing)
+        self.right_offset = float(right_offset)
+
+        self.total_bars: int = 0
+        self.view_x: float = 0.0
+        self.view_w: float = 1.0
+
+        self._visible = VisibleRange(0, -1)
+
+    def set_view(self, x: float, w: float) -> None:
+        self.view_x = float(x)
+        self.view_w = max(1.0, float(w))
+        self._recalc_visible()
+
+    def set_total_bars(self, n: int) -> None:
+        self.total_bars = max(0, int(n))
+        self._recalc_visible()
+
+    def get_visible_range(self) -> VisibleRange:
+        return self._visible
+
+    def _recalc_visible(self) -> None:
+        if self.total_bars <= 0:
+            self._visible = VisibleRange(0, -1)
+            return
+
+        spacing = max(1.0, self.bar_spacing)
+        bars_in_view = int(self.view_w / spacing) + 2
+
+        last = self.total_bars - 1
+        end_index = int(round(last - self.right_offset))
+        end_index = max(0, min(last, end_index))
+
+        start_index = end_index - (bars_in_view - 1)
+        if start_index < 0:
+            start_index = 0
+
+        self._visible = VisibleRange(start_index, end_index)
+
+    def index_to_x(self, index: int) -> float:
+        vr = self._visible
+        if vr.end < vr.start:
+            return self.view_x
+
+        dx_bars = index - vr.end
+        x_right = self.view_x + self.view_w
+        return float(x_right + dx_bars * self.bar_spacing)
+
+    def x_to_index(self, x: float) -> int:
+        if self.total_bars <= 0:
+            return 0
+
+        vr = self._visible
+        x_right = self.view_x + self.view_w
+        dx_px = float(x) - x_right
+        dx_bars = dx_px / max(1.0, self.bar_spacing)
+
+        idx = int(round(vr.end + dx_bars))
+        return max(0, min(self.total_bars - 1, idx))
+
+    def zoom_at_x(self, mouse_x: float, delta: float) -> None:
+        factor = 1.0 + (0.10 if delta > 0 else -0.10)
+        self.bar_spacing = float(max(3.0, min(40.0, self.bar_spacing * factor)))
+        self._recalc_visible()
+
+    def pan_by_pixels(self, dx_px: float) -> None:
+        bars = dx_px / max(1.0, self.bar_spacing)
+        self.right_offset += bars
+        self.right_offset = float(max(-50.0, min(50000.0, self.right_offset)))
+        self._recalc_visible()
 
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\series\__init__.py
@@ -587,101 +1073,295 @@ def link_program(vertex_shader: int, fragment_shader: int) -> int:
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\renderer.py
 ================================================================================
-"""Renderer OpenGL (versión mínima).
+"""
+Renderer 2D en pixeles (OpenGL 3.3 core).
 
-Por ahora:
-- Compila shaders
-- Crea VAO/VBO para un triángulo
-- Dibuja cada frame
+A partir de ahora el Chart Engine trabajará en coordenadas de "app":
+- x, y, w, h en PIXELES.
 
-En próximos pasos:
-- Añadir batch renderer de líneas/rects
-- Instancing para velas
-- Texturas y texto
+El renderer se encarga de:
+- Convertir pixeles → NDC en el vertex shader usando uResolution.
+- Batch simple por frame para líneas y rectángulos.
+- Mantener el pipeline moderno (VAO/VBO + shaders).
+
+IMPORTANTE:
+- Este renderer NO sabe nada de trading, velas, escalas, etc.
+- Solo dibuja primitivas 2D.
 """
 from __future__ import annotations
+import ctypes
+from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Tuple, Any
 
 import numpy as np
 from OpenGL.GL import (
-    GL_ARRAY_BUFFER, GL_FLOAT, GL_STATIC_DRAW, GL_TRIANGLES,
-    GL_VERTEX_SHADER, GL_FRAGMENT_SHADER,
-    glGenVertexArrays, glBindVertexArray,
-    glGenBuffers, glBindBuffer, glBufferData,
-    glEnableVertexAttribArray, glVertexAttribPointer,
-    glUseProgram, glDrawArrays, glDeleteProgram,
-    glDeleteBuffers, glDeleteVertexArrays,
+    GL_ARRAY_BUFFER, GL_BLEND, GL_DYNAMIC_DRAW, GL_FLOAT,
+    GL_FRAGMENT_SHADER, GL_LINES, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA,
+    GL_TRIANGLES, GL_VERTEX_SHADER, glBindBuffer, glBindVertexArray,
+    glBlendFunc, glBufferData, glDeleteBuffers, glDeleteProgram,
+    glDeleteVertexArrays, glDrawArrays, glEnable, glEnableVertexAttribArray,
+    glGenBuffers, glGenVertexArrays, glGetUniformLocation, glUseProgram,
+    glUniform2f, glVertexAttribPointer,
 )
 from render.gl_utils import compile_shader, link_program
 
 
-class Renderer:
+@dataclass(frozen=True)
+class Color:
+    """Color RGBA (0..1)."""
+    r: float
+    g: float
+    b: float
+    a: float = 1.0
+
+
+class Renderer2D:
+    """
+    Renderer 2D por batches (mínimo pero sólido).
+
+    Flujo por frame:
+        begin_frame(w,h)
+        draw_line_px(...), draw_rect_px(...)
+        end_frame()
+    """
+
     def __init__(self) -> None:
+        # GL objects
         self._program: int | None = None
         self._vao: int | None = None
         self._vbo: int | None = None
 
-    def init(self) -> None:
-        vertex_src = """#version 330 core
-        layout (location = 0) in vec2 aPos;
-        void main() {
-            gl_Position = vec4(aPos.xy, 0.0, 1.0);
-        }
-        """
+        # Uniform location
+        self._u_resolution: int | None = None
 
-        fragment_src = """#version 330 core
-        out vec4 FragColor;
-        void main() {
-            FragColor = vec4(0.9, 0.9, 0.2, 1.0);
-        }
-        """
+        # Frame state
+        self._width: int = 1
+        self._height: int = 1
+
+        # Batches (cada vértice: x, y, r, g, b, a)
+        self._line_verts: List[float] = []  # legacy (GL_LINES)
+        self._tri_verts: List[float] = []   # rects + líneas gruesas como quads
+
+    # -------------------------
+    # Lifecycle
+    # -------------------------
+    def init(self) -> None:
+        vert_path = Path("render/shaders/basic2d.vert")
+        frag_path = Path("render/shaders/basic2d.frag")
+        vertex_src = vert_path.read_text(encoding="utf-8")
+        fragment_src = frag_path.read_text(encoding="utf-8")
 
         vs = compile_shader(GL_VERTEX_SHADER, vertex_src)
         fs = compile_shader(GL_FRAGMENT_SHADER, fragment_src)
         self._program = link_program(vs, fs)
 
-        # Triángulo (NDC)
-        vertices = np.array([
-            -0.6, -0.4,
-             0.6, -0.4,
-             0.0,  0.6,
-        ], dtype=np.float32)
+        self._u_resolution = glGetUniformLocation(self._program, "uResolution")
 
         self._vao = glGenVertexArrays(1)
-        glBindVertexArray(self._vao)
-
         self._vbo = glGenBuffers(1)
+
+        glBindVertexArray(self._vao)
         glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
 
+        glBufferData(GL_ARRAY_BUFFER, 1024 * 6 * 4, None, GL_DYNAMIC_DRAW)
+
+        # layout(location=0) vec2 aPosPx
+        stride = 6 * 4
         glEnableVertexAttribArray(0)
-        glVertexAttribPointer(0, 2, GL_FLOAT, False, 0, None)
+        glVertexAttribPointer(0, 2, GL_FLOAT, False, stride, ctypes.c_void_p(0))
 
-        # Unbind
+        # layout(location=1) vec4 aColor
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 4, GL_FLOAT, False, stride, ctypes.c_void_p(8))
+
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         glBindVertexArray(0)
 
-    def draw(self) -> None:
-        assert self._program is not None and self._vao is not None
-        glUseProgram(self._program)
-        glBindVertexArray(self._vao)
-        glDrawArrays(GL_TRIANGLES, 0, 3)
-        glBindVertexArray(0)
-        glUseProgram(0)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
     def shutdown(self) -> None:
         if self._program is not None:
-            glDeleteProgram(self._program)
-            self._program = None
+            glDeleteProgram(self._program); self._program = None
         if self._vbo is not None:
-            glDeleteBuffers(1, [self._vbo])
-            self._vbo = None
+            glDeleteBuffers(1, [self._vbo]); self._vbo = None
         if self._vao is not None:
-            glDeleteVertexArrays(1, [self._vao])
-            self._vao = None
+            glDeleteVertexArrays(1, [self._vao]); self._vao = None
+
+    # -------------------------
+    # Frame API
+    # -------------------------
+    def begin_frame(self, width: int, height: int) -> None:
+        self._width = max(1, int(width))
+        self._height = max(1, int(height))
+        self._line_verts.clear()
+        self._tri_verts.clear()
+
+    def end_frame(self) -> None:
+        assert self._program is not None and self._vao is not None and self._vbo is not None
+        assert self._u_resolution is not None
+
+        glUseProgram(self._program)
+        glUniform2f(self._u_resolution, float(self._width), float(self._height))
+        glBindVertexArray(self._vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
+
+        # Triángulos (rects + líneas gruesas)
+        if self._tri_verts:
+            tri_arr = np.array(self._tri_verts, dtype=np.float32)
+            glBufferData(GL_ARRAY_BUFFER, tri_arr.nbytes, tri_arr, GL_DYNAMIC_DRAW)
+            glDrawArrays(GL_TRIANGLES, 0, len(tri_arr) // 6)
+
+        # Líneas finas legacy (si alguien aún las usa)
+        if self._line_verts:
+            line_arr = np.array(self._line_verts, dtype=np.float32)
+            glBufferData(GL_ARRAY_BUFFER, line_arr.nbytes, line_arr, GL_DYNAMIC_DRAW)
+            glDrawArrays(GL_LINES, 0, len(line_arr) // 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
+        glUseProgram(0)
+
+    # -------------------------
+    # Helpers
+    # -------------------------
+    @staticmethod
+    def _to_color(c: Any) -> Color:
+        """Acepta Color o (r,g,b[,a]) en [0..1]."""
+        if isinstance(c, Color):
+            return c
+        if isinstance(c, (tuple, list)) and (3 <= len(c) <= 4):
+            r = float(c[0]); g = float(c[1]); b = float(c[2])
+            a = float(c[3]) if len(c) == 4 else 1.0
+            return Color(r, g, b, a)
+        # fallback blanco
+        return Color(1.0, 1.0, 1.0, 1.0)
+
+    @staticmethod
+    def _push_vertex(buf: List[float], x: float, y: float, c: Color) -> None:
+        buf.extend([float(x), float(y), float(c.r), float(c.g), float(c.b), float(c.a)])
+
+    # -------------------------
+    # Primitives
+    # -------------------------
+    def draw_line_px(self, x1: float, y1: float, x2: float, y2: float,
+                     color: Any, width: float = 1.0, **_) -> None:
+        """
+        Línea en píxeles con GROSOR. No depende de glLineWidth.
+        - H/V: usa rect (nítido).
+        - Diagonal: genera un quad (dos triángulos) alrededor del segmento.
+        """
+        col = self._to_color(color)
+        w = max(1.0, float(width))
+        x1 = float(x1); y1 = float(y1); x2 = float(x2); y2 = float(y2)
+
+        # Horizontal
+        if abs(y2 - y1) < 1e-6:
+            x_min, x_max = (x1, x2) if x1 <= x2 else (x2, x1)
+            y_top = y1 - (w - 1.0) * 0.5
+            self.draw_rect_px(x_min, y_top, x_max - x_min, w, col)
+            return
+
+        # Vertical
+        if abs(x2 - x1) < 1e-6:
+            y_min, y_max = (y1, y2) if y1 <= y2 else (y2, y1)
+            x_left = x1 - (w - 1.0) * 0.5
+            self.draw_rect_px(x_left, y_min, w, y_max - y_min, col)
+            return
+
+        # Diagonal: quad
+        self._push_quad_line(x1, y1, x2, y2, w, col)
+
+    def draw_rect_px(self, x: float, y: float, w: float, h: float, color: Any, **_) -> None:
+        """
+        Rect relleno (dos triángulos). (x,y) esquina sup-izquierda (coordenadas de app).
+        """
+        col = self._to_color(color)
+        x2 = x + w
+        y2 = y + h
+
+        # Tri 1
+        self._push_vertex(self._tri_verts, x,  y,  col)
+        self._push_vertex(self._tri_verts, x2, y,  col)
+        self._push_vertex(self._tri_verts, x2, y2, col)
+
+        # Tri 2
+        self._push_vertex(self._tri_verts, x,  y,  col)
+        self._push_vertex(self._tri_verts, x2, y2, col)
+        self._push_vertex(self._tri_verts, x,  y2, col)
+
+    # -------------------------
+    # Internal: quad para línea diagonal
+    # -------------------------
+    def _push_quad_line(self, x1: float, y1: float, x2: float, y2: float,
+                        width: float, col: Color) -> None:
+        import math
+        dx = x2 - x1
+        dy = y2 - y1
+        L = math.hypot(dx, dy)
+        if L <= 0.0:
+            return
+
+        nx = -dy / L
+        ny =  dx / L
+        half = (width - 1.0) * 0.5
+
+        ox = nx * half
+        oy = ny * half
+
+        # Quad CCW
+        x1a, y1a = x1 - ox, y1 - oy
+        x1b, y1b = x1 + ox, y1 + oy
+        x2b, y2b = x2 + ox, y2 + oy
+        x2a, y2a = x2 - ox, y2 - oy
+
+        # Triángulo 1: p1, p2, p3
+        self._push_vertex(self._tri_verts, x1a, y1a, col)
+        self._push_vertex(self._tri_verts, x1b, y1b, col)
+        self._push_vertex(self._tri_verts, x2b, y2b, col)
+
+        # Triángulo 2: p1, p3, p4
+        self._push_vertex(self._tri_verts, x1a, y1a, col)
+        self._push_vertex(self._tri_verts, x2b, y2b, col)
+        self._push_vertex(self._tri_verts, x2a, y2a, col)
 
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\__init__.py
 ================================================================================
+
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\basic2d.frag
+================================================================================
+#version 330 core
+in vec4 vColor;
+out vec4 FragColor;
+
+void main() {
+    FragColor = vColor;
+}
+
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\basic2d.vert
+================================================================================
+#version 330 core
+layout (location = 0) in vec2 aPosPx;
+layout (location = 1) in vec4 aColor;
+
+out vec4 vColor;
+
+uniform vec2 uResolution; // (width, height) en pixeles
+
+void main() {
+    // Convertir de pixeles a NDC:
+    // x_ndc = (x / w) * 2 - 1
+    // y_ndc = 1 - (y / h) * 2   (si usamos origen arriba)
+    float x = (aPosPx.x / uResolution.x) * 2.0 - 1.0;
+    float y = 1.0 - (aPosPx.y / uResolution.y) * 2.0;
+
+    gl_Position = vec4(x, y, 0.0, 1.0);
+    vColor = aColor;
+}
 
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\requirements.txt

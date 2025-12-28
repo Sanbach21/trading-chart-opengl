@@ -1,4 +1,5 @@
-"""Ventana GLFW + loop principal.
+"""
+Ventana GLFW + loop principal.
 
 Esta clase es el 'Core App' inicial:
 - Inicializa GLFW
@@ -6,14 +7,18 @@ Esta clase es el 'Core App' inicial:
 - Captura input y lo vuelca a InputState
 - Corre el loop: update -> render
 
-NOTA: Aquí todavía no existe Chart Engine. Por ahora solo validamos la base del renderer.
+NOTA: Aquí todavía no existe Chart Engine. Por ahora validamos:
+- Renderer2D en píxeles
+- TimeScale (zoom/pan)
+- PriceScale (autoscale + price->y)
+- ChartOverlay (layout + grid + bandas de ejes)
+- CandleSeries (velas con data fake)
 """
 from __future__ import annotations
 
-import ctypes
 import time
 import glfw
-from charts.scales.time_scale import TimeScale
+
 from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     glClear, glClearColor, glViewport,
@@ -23,24 +28,99 @@ from OpenGL.GL import (
 from app.input import InputState
 from render.renderer import Renderer2D, Color
 
+from charts.scales.time_scale import TimeScale
+from charts.scales.price_scale import PriceScale
+from charts.overlays.chart_overlay import ChartOverlay
+
+from data.fake_ohlc import make_fake_ohlc
+from charts.series.candles import CandleSeries
+
+
+class _OverlayRendererAdapter:
+    """
+    Adapter para que ChartOverlay pueda dibujar usando tu Renderer2D aunque
+    ChartOverlay intente pasar kwargs como color= o width=.
+
+    Intentamos soportar:
+      - draw_rect_px(x, y, w, h, color=..., **kwargs)
+      - draw_line_px(x1, y1, x2, y2, width=..., color=..., **kwargs)
+    """
+    def __init__(self, renderer: Renderer2D):
+        self._r = renderer
+
+    def _to_color(self, c):
+        if c is None:
+            return Color(1.0, 1.0, 1.0, 1.0)
+        if isinstance(c, Color):
+            return c
+        # tuple/list RGBA
+        try:
+            return Color(float(c[0]), float(c[1]), float(c[2]), float(c[3]))
+        except Exception:
+            return Color(1.0, 1.0, 1.0, 1.0)
+
+    def draw_rect_px(self, x, y, w, h, color=None, **kwargs):
+        self._r.draw_rect_px(float(x), float(y), float(w), float(h), self._to_color(color))
+
+    def draw_line_px(self, x1, y1, x2, y2, width=1, color=None, **kwargs):
+        """
+        Si tu Renderer2D soporta width, lo pasamos.
+        Si no lo soporta, esta llamada podría fallar: en ese caso, quitá el width
+        o actualizá Renderer2D.draw_line_px para aceptarlo.
+        """
+        try:
+            self._r.draw_line_px(
+                float(x1), float(y1), float(x2), float(y2),
+                self._to_color(color),
+                width=float(width),
+            )
+        except TypeError:
+            # fallback si tu firma no acepta width=
+            self._r.draw_line_px(
+                float(x1), float(y1), float(x2), float(y2),
+                self._to_color(color),
+            )
+
 
 class GLFWWindow:
     def __init__(self, title: str, width: int, height: int) -> None:
         # TimeScale (pixeles)
         self.time_scale = TimeScale(bar_spacing=10.0, right_offset=0.0)
 
-        # Datset fake (200 varras) Por ahora solo usamos el count
-        self.total_bars = 200
+        # Serie + dataset fake
+        self.series = CandleSeries(make_fake_ohlc(500))
+        self.total_bars = len(self.series.data)  # o len(self.series) si implementaste __len__
 
-        # Para pan con arratre
-        self._dragging = False  
+        # Para pan con arrastre
+        self._dragging = False
 
         self.title = title
         self.width = width
         self.height = height
         self._window = None
         self.input = InputState()
+
         self.renderer = Renderer2D()
+
+        # ----------------------------
+        # Overlay / Axes / Grid
+        # ----------------------------
+        self.chart_config = {
+            "price_axis": {"side": "right", "width_px": 0, "show": True},
+            "time_axis": {"height_px": 0, "show": True},
+            "grid": {"show": True, "vx": 80, "hy": 60, "line_width": 3},
+            "padding": {"left": 0, "right": 60, "top": 0, "bottom": 30},
+            "coords": {"y_down": True},  # <— origen arriba
+        }
+
+        # PriceScale real (asumiendo que ya lo implementaste)
+        self.price_scale = PriceScale()
+
+        # Overlay conectado a tus escalas
+        self.overlay = ChartOverlay(self.time_scale, self.price_scale, self.chart_config)
+
+        # Adapter para evitar problemas de firma (kwargs)
+        self.overlay_renderer = _OverlayRendererAdapter(self.renderer)
 
     def _on_framebuffer_size(self, window, w: int, h: int) -> None:
         self.width = max(1, int(w))
@@ -93,7 +173,7 @@ class GLFWWindow:
             raise RuntimeError("No se pudo crear la ventana GLFW.")
 
         glfw.make_context_current(self._window)
-        glfw.swap_interval(1)  # VSync ON (lo podemos hacer configurable)
+        glfw.swap_interval(1)  # VSync ON
 
         glfw.set_framebuffer_size_callback(self._window, self._on_framebuffer_size)
         glfw.set_key_callback(self._window, self._on_key)
@@ -114,7 +194,6 @@ class GLFWWindow:
             print("Vendor:", vendor.decode() if vendor else vendor)
             print("Renderer:", renderer.decode() if renderer else renderer)
         except Exception:
-            # Algunas plataformas pueden fallar si el contexto no está listo
             pass
 
     def run(self) -> None:
@@ -128,18 +207,30 @@ class GLFWWindow:
             now = time.perf_counter()
             dt = now - last
             last = now
+            _ = dt  # reservado por si luego lo usas
 
             self.input.begin_frame()
             glfw.poll_events()
 
-            # --- TimeScale: configurar viewport y data ---
-            left_margin = 60
-            right_margin = 60
-            view_x = float(left_margin)
-            view_w = float(self.width - left_margin - right_margin)
+            # ----------------------------
+            # Definir área base del chart
+            # ----------------------------
+            chart_x = 0.0
+            chart_y = 0.0
+            chart_w = float(self.width)
+            chart_h = float(self.height)
 
-            self.time_scale.set_view(view_x, view_w)
+            self.overlay.set_view(chart_x, chart_y, chart_w, chart_h)
+            plot_x, plot_y, plot_w, plot_h = self.overlay.get_plot_rect()
+
+            # ----------------------------
+            # Conectar scales usando el PLOT
+            # ----------------------------
+            self.time_scale.set_view(plot_x, plot_w)
             self.time_scale.set_total_bars(self.total_bars)
+
+            # IMPORTANTÍSIMO: PriceScale necesita el viewport del plot
+            self.price_scale.set_viewport(plot_x, plot_y, plot_w, plot_h)
 
             # --- Zoom con rueda ---
             if self.input.mouse.scroll_y != 0.0:
@@ -148,51 +239,50 @@ class GLFWWindow:
             # --- Pan con arrastre (mouse left) ---
             if self.input.mouse.left and not self._dragging:
                 self._dragging = True
-
             if not self.input.mouse.left and self._dragging:
                 self._dragging = False
 
             if self._dragging and self.input.mouse.dx != 0.0:
-            # dx positivo (mueves mouse a la derecha) => ver historial (más viejo)
+                # dx positivo (mueves mouse a la derecha) => ver historial (más viejo)
                 self.time_scale.pan_by_pixels(self.input.mouse.dx)
 
-
-            # Update (por ahora solo un ejemplo: cerrar con Q)
+            # Cerrar con Q
             if self.input.is_key_down(glfw.KEY_Q):
                 glfw.set_window_should_close(self._window, True)
 
+            # ----------------------------
             # Render
+            # ----------------------------
             glClearColor(0.06, 0.07, 0.09, 1.0)
             glClear(GL_COLOR_BUFFER_BIT)
 
             self.renderer.begin_frame(self.width, self.height)
 
-            # Fondo del área del chart
-            chart_y = 80
-            chart_h = self.height - 160
-            self.renderer.draw_rect_px(view_x, chart_y, view_w, chart_h, Color(0.15, 0.18, 0.22, 1.0))
+            # Fondo TOTAL del chart
+            self.renderer.draw_rect_px(
+                0.0, 0.0,
+                float(self.width), float(self.height),
+                Color(0.5, 0.5, 0.5, 0.5)
+            )
 
-            # Dibujar “peine” de barras verticales usando TimeScale
+            # Overlay (grid + bandas de ejes)
+            self.overlay.draw(self.overlay_renderer)
+
+            # ----------------------------
+            # Autoscale + velas
+            # ----------------------------
             vr = self.time_scale.get_visible_range()
+            vs = max(0, int(vr.start))
+            ve = min(self.total_bars - 1, int(vr.end))
 
-            for i in range(vr.start, vr.end + 1):
-                x = self.time_scale.index_to_x(i)
-                self.renderer.draw_line_px(
-                    x, chart_y, x, chart_y + chart_h,
-                    Color(0.25, 0.35, 0.55, 0.8)
-                )
+            if ve >= vs:
+                # Autoscale SOLO con visibles
+                self.price_scale.autoscale_from_provider(vs, ve, self.series.get_high_low)
 
-
-            # borde del chart
-            self.renderer.draw_line_px(view_x, chart_y, view_x + view_w, chart_y, Color(0.6, 0.6, 0.6, 1.0))
-            self.renderer.draw_line_px(view_x, chart_y + chart_h, view_x + view_w, chart_y + chart_h, Color(0.6, 0.6, 0.6, 1.0))
-            self.renderer.draw_line_px(view_x, chart_y, view_x, chart_y + chart_h, Color(0.6, 0.6, 0.6, 1.0))
-            self.renderer.draw_line_px(view_x + view_w, chart_y, view_x + view_w, chart_y + chart_h, Color(0.6, 0.6, 0.6, 1.0))
+                # Dibujar velas
+                self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
 
             self.renderer.end_frame()
-
-
-
             glfw.swap_buffers(self._window)
 
         self.shutdown()
