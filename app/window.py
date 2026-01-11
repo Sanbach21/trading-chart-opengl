@@ -31,6 +31,7 @@ from charts.scales.price_scale import PriceScale
 from charts.overlays.chart_overlay import ChartOverlay
 from charts.overlays.axis import PriceAxisOverlay, TimeAxisOverlay
 from charts.overlays.crosshair import CrosshairOverlay, CrosshairStyle
+from charts.overlays.tooltip import TooltipOverlay
 
 from data.fake_ohlc import make_fake_ohlc
 from charts.series.candles import CandleSeries
@@ -142,7 +143,7 @@ class GLFWWindow:
         }
 
         # ----------------------------
-        # Overlay layout
+        # Overlay layout (¡PRIMERO!)
         # ----------------------------
         self.overlay = ChartOverlay(self.time_scale, self.price_scale, self.chart_config)
         self.overlay_renderer = _OverlayRendererAdapter(self.renderer)
@@ -165,13 +166,26 @@ class GLFWWindow:
         # ----------------------------
         # Crosshair
         # ----------------------------
+                # Crosshair
         self.crosshair = CrosshairOverlay(
-            self.overlay,
-            self.input,
-            CrosshairStyle(
+            overlay=self.overlay,
+            input_state=self.input,
+            series=self.series,  # ← AGREGADO AQUÍ
+            style=CrosshairStyle(
                 color=(0.9, 0.9, 0.95, 0.55),
                 width=1.2
             )
+        )
+
+        # ----------------------------
+        # Tooltip (AHORA SÍ, después de crear overlay)
+        # ----------------------------
+        self.tooltip = TooltipOverlay(
+            overlay=self.overlay,
+            time_scale=self.time_scale,
+            input_state=self.input,
+            series=self.series,
+            max_distance_px=20.0
         )
 
     # -------------------------------------------------
@@ -292,17 +306,13 @@ class GLFWWindow:
                 glfw.set_window_should_close(self._window, True)
 
             # ---------------- Render ----------------
-            glClearColor(0.1, 0.1, 0.1, 1.0)
+            glClearColor(0.0, 0.0, 0.0, 1.0)  # Fondo negro puro
             glClear(GL_COLOR_BUFFER_BIT)
 
             self.renderer.begin_frame(self.width, self.height)
 
-            # Fondo general
-            self.renderer.draw_rect_px(
-                0.0, 0.0,
-                float(self.width), float(self.height),
-                Color(0.01, 0.01, 0.01, 0.5)
-            )
+            # Fondo general (opcional, pero si querés un overlay sutil)
+            # self.renderer.draw_rect_px(0, 0, float(self.width), float(self.height), Color(0.01, 0.01, 0.01, 0.5))
 
             # Overlay (grid + bandas de ejes)
             self.overlay.draw(self.overlay_renderer)
@@ -318,6 +328,9 @@ class GLFWWindow:
                     lambda i: self.series.get_high_low(i)
                 )
                 self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
+
+            # Tooltip (después de velas, antes del crosshair)
+            self.tooltip.draw(self.renderer)
 
             # Crosshair encima de todo
             self.crosshair.draw(self.renderer)
@@ -342,7 +355,7 @@ class GLFWWindow:
 
 
 def main() -> None:
-    win = GLFWWindow(title="OpenGL Trading Core - Demo with Dates", width=1280, height=720)
+    win = GLFWWindow(title="OpenGL Trading Core - Demo", width=1280, height=720)
     win.run()
 
 

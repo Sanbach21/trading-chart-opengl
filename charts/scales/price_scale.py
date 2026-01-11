@@ -1,4 +1,3 @@
-# charts/scales/price_scale.py
 """
 PriceScale
 
@@ -94,6 +93,12 @@ class PriceScale:
         self.view_w: float = 1.0
         self.view_h: float = 1.0
 
+        # Guardamos también para y_to_price
+        self.plot_x: float = 0.0
+        self.plot_y: float = 0.0
+        self.plot_w: float = 1.0
+        self.plot_h: float = 1.0
+
         # Coordinate system
         self.y_down: bool = bool(y_down)
 
@@ -116,6 +121,12 @@ class PriceScale:
         self.view_y = float(y)
         self.view_w = max(1.0, float(w))
         self.view_h = max(1.0, float(h))
+
+        # Guardamos para y_to_price
+        self.plot_x = self.view_x
+        self.plot_y = self.view_y
+        self.plot_w = self.view_w
+        self.plot_h = self.view_h
 
     def set_coord_system(self, *, y_down: bool) -> None:
         self.y_down = bool(y_down)
