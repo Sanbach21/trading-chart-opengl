@@ -6,16 +6,14 @@ from typing import List, Tuple, Optional
 from charts.scales.time_scale import TimeScale
 from charts.scales.price_scale import PriceScale
 from data.fake_ohlc import OHLC
-
+from render.renderer import Renderer2D, Color
 
 
 @dataclass
 class CandleStyle:
-    body_width_px: float = 8.0
-    wick_width_px: float = 1.0
-    gap_px: float = 3.0  # espacio entre velas
     up_color: Tuple[float, float, float, float] = (0.10, 0.80, 0.35, 1.0)
     down_color: Tuple[float, float, float, float] = (0.90, 0.25, 0.25, 1.0)
+    wick_width_px: float = 1.0
 
 
 class CandleSeries:
@@ -30,27 +28,25 @@ class CandleSeries:
         d = self.data[i]
         return d.h, d.l
 
-    def draw(self, r, time_scale: TimeScale, price_scale: PriceScale, visible_start: int, visible_end: int) -> None:
+    def draw(self, renderer: Renderer2D, time_scale: TimeScale, price_scale: PriceScale, visible_start: int, visible_end: int) -> None:
         """
-        r: Renderer2D (o adapter que tenga draw_rect_px / draw_line_px)
-        visible_start/end: índices visibles
+        Dibuja velas japonesas con ancho dinámico y gap mínimo para evitar overlapping en zoom máximo.
         """
         st = self.style
 
-        # Para una primera versión, definimos el “step” (ancho + gap)
-        step = st.body_width_px + st.gap_px
+        # Constantes para evitar overlapping
+        MIN_BAR_WIDTH = 4.0  # píxeles mínimos por vela
+        MIN_GAP =1.0       # píxeles mínimos entre velas
 
-        # fallback si no hay nada visible
         if visible_end < visible_start:
             return
 
-        # Dibujo: candle por candle
         for i in range(visible_start, visible_end + 1):
             if i < 0 or i >= len(self.data):
                 continue
 
             d = self.data[i]
-            x_center = time_scale.index_to_x(i)  # lo implementamos abajo si falta
+            x_center = time_scale.index_to_x(i)
 
             y_o = price_scale.price_to_y(d.o)
             y_c = price_scale.price_to_y(d.c)
@@ -60,8 +56,23 @@ class CandleSeries:
             is_up = d.c >= d.o
             color = st.up_color if is_up else st.down_color
 
+            # Calcular ancho dinámico basado en bar_spacing del TimeScale
+            bar_spacing = max(1.0, time_scale.bar_spacing)
+            bar_width_raw = bar_spacing * 0.5  # 80% del spacing para dejar gap
+
+            # Clamp con mínimos para evitar overlapping
+            bar_width = max(MIN_BAR_WIDTH, bar_width_raw)
+            gap = bar_spacing - bar_width
+            if gap < MIN_GAP:
+                bar_width = bar_spacing - MIN_GAP
+                bar_width = max(MIN_BAR_WIDTH, bar_width)  # Asegurar mínimo
+
+            # Posiciones del cuerpo
+            left = x_center - bar_width / 2
+            right = x_center + bar_width / 2
+
             # Wick (línea vertical)
-            r.draw_line_px(
+            renderer.draw_line_px(
                 x_center, y_h,
                 x_center, y_l,
                 color=color,
@@ -73,10 +84,8 @@ class CandleSeries:
             bot = max(y_o, y_c)
             h = max(1.0, bot - top)
 
-            x0 = x_center - st.body_width_px * 0.5
-
-            r.draw_rect_px(
-                x0, top,
-                st.body_width_px, h,
+            renderer.draw_rect_px(
+                left, top,
+                bar_width, h,
                 color=color
             )
