@@ -38,11 +38,11 @@ class ChartOverlay:
 
     DEFAULT_CONFIG = {
         "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
-        "price_axis": {"show": True, "side": "right", "width_px": 90, "separator_width": 1},
-        "time_axis": {"show": True, "height_px": 44, "separator_width": 1},
-        "grid": {"show": True, "vx": 80, "hy": 20, "line_width": 5},
+        "price_axis": {"show": True, "side": "right", "width_px": 90, "separator_width": 5},
+        "time_axis": {"show": True, "height_px": 44, "separator_width": 5},
+        "grid": {"show": True, "vx": 80, "hy": 20, "line_width": 0.5},
         "colors": {
-            "grid": (0.10, 0.70, 0.05, 0.50),
+            "grid": (0.1, 0.7, 0.1, 1.0),
             "axis_band": (1.0, 1.0, 0.0, 1.0),
             "axis_separator": (0.5, 0.5, 0.5, 1.0),
         },
