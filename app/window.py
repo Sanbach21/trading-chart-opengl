@@ -109,24 +109,24 @@ class GLFWWindow:
                 "side": "right",
                 "width_px": 100,
                 "show": True,
-                "font_size_px": 20,
+                "font_size_px": 10,
                 "font_thickness_px": 2,
                 "font_color": (1, 1, 1, 1),
                 "padding_px": 10,
                 "gridline_in_plot": True,
-                "gridline_color": (0.2, 0.2, 0.2, 0.25),
-                "gridline_width": 1,
+                "gridline_color": (0.8, 0.8, 0.8, 0.50),
+                "gridline_width": 2,
                 "tick_in_axis": True,
                 "tick_length_px": 10,
                 "tick_width": 2,
                 "tick_color": (0.7, 0.7, 0.7, 0.9),
                 "decimals": 2,
-                "target_ticks": 6,
+                "target_ticks": 20,
             },
             "time_axis": {
                 "height_px": 34,
                 "show": True,
-                "font_size_px": 14,
+                "font_size_px": 10,
                 "font_thickness_px": 2,
                 "font_color": (1, 1, 1, 1),
                 "padding_px": 6,
@@ -134,11 +134,12 @@ class GLFWWindow:
                 "tick_length_px": 10,
                 "tick_width": 1,
                 "tick_color": (0.7, 0.7, 0.7, 0.9),
-                "gridline_in_plot": False,
+                "gridline_in_plot": True,
+                "gridline_color": (0.8, 0.8, 0.8, 0.50),
                 "target_ticks": 8,
             },
             "grid": {"show": True, "vx": 80, "hy": 60, "line_width": 1},
-            "padding": {"left": 0, "right": 60, "top": 0, "bottom": 30},
+            "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
             "coords": {"y_down": True},
         }
 
@@ -166,13 +167,12 @@ class GLFWWindow:
         # ----------------------------
         # Crosshair
         # ----------------------------
-                # Crosshair
         self.crosshair = CrosshairOverlay(
             overlay=self.overlay,
             input_state=self.input,
             series=self.series,  # ← AGREGADO AQUÍ
             style=CrosshairStyle(
-                color=(0.9, 0.9, 0.95, 0.55),
+                color=(0.1, 0.1, 0.1, 0.55),
                 width=1.2
             )
         )

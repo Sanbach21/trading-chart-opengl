@@ -7,6 +7,7 @@ from charts.scales.time_scale import TimeScale
 from charts.scales.price_scale import PriceScale
 from data.fake_ohlc import OHLC
 from render.renderer import Renderer2D, Color
+import math
 
 
 @dataclass
@@ -14,6 +15,9 @@ class CandleStyle:
     up_color: Tuple[float, float, float, float] = (0.10, 0.80, 0.35, 1.0)
     down_color: Tuple[float, float, float, float] = (0.90, 0.25, 0.25, 1.0)
     wick_width_px: float = 1.0
+    width_factor: float = 0.8  # Fracción del spacing para ancho (deja gap)
+    min_width_px: float = 4.0  # Ancho mínimo para evitar finura excesiva
+    min_gap_px: float = 1.0    # Gap mínimo para evitar overlapping
 
 
 class CandleSeries:
@@ -30,16 +34,16 @@ class CandleSeries:
 
     def draw(self, renderer: Renderer2D, time_scale: TimeScale, price_scale: PriceScale, visible_start: int, visible_end: int) -> None:
         """
-        Dibuja velas japonesas con ancho dinámico y gap mínimo para evitar overlapping en zoom máximo.
+        Dibuja velas japonesas con ancho dinámico, gap mínimo y rounding para crispness.
+        Basado en best practices de TradingView/Highcharts: clamp min/max width, dynamic spacing.
         """
         st = self.style
 
-        # Constantes para evitar overlapping
-        MIN_BAR_WIDTH = 4.0  # píxeles mínimos por vela
-        MIN_GAP =1.0       # píxeles mínimos entre velas
-
         if visible_end < visible_start:
             return
+
+        # Número de velas visibles para optimizaciones futuras (ej: grouping si > threshold)
+        visible_count = visible_end - visible_start + 1
 
         for i in range(visible_start, visible_end + 1):
             if i < 0 or i >= len(self.data):
@@ -56,22 +60,25 @@ class CandleSeries:
             is_up = d.c >= d.o
             color = st.up_color if is_up else st.down_color
 
-            # Calcular ancho dinámico basado en bar_spacing del TimeScale
+            # Ancho dinámico basado en spacing (novel: clamp para no overlapping)
             bar_spacing = max(1.0, time_scale.bar_spacing)
-            bar_width_raw = bar_spacing * 0.5  # 80% del spacing para dejar gap
+            bar_width_raw = bar_spacing * st.width_factor
 
-            # Clamp con mínimos para evitar overlapping
-            bar_width = max(MIN_BAR_WIDTH, bar_width_raw)
+            # Clamp con mínimos (evita finura/overlapping)
+            bar_width = max(st.min_width_px, bar_width_raw)
             gap = bar_spacing - bar_width
-            if gap < MIN_GAP:
-                bar_width = bar_spacing - MIN_GAP
-                bar_width = max(MIN_BAR_WIDTH, bar_width)  # Asegurar mínimo
+            if gap < st.min_gap_px:
+                bar_width = bar_spacing - st.min_gap_px
+                bar_width = max(st.min_width_px, bar_width)
 
-            # Posiciones del cuerpo
+            # Round para crispness (anti-aliasing natural en OpenGL)
+            bar_width = math.floor(bar_width)
+            x_center = math.floor(x_center) + 0.5  # Snap to pixel grid for sharp lines
+
             left = x_center - bar_width / 2
             right = x_center + bar_width / 2
 
-            # Wick (línea vertical)
+            # Wick (línea vertical, snap to center)
             renderer.draw_line_px(
                 x_center, y_h,
                 x_center, y_l,
@@ -79,7 +86,7 @@ class CandleSeries:
                 width=st.wick_width_px,
             )
 
-            # Body (rect)
+            # Body (rect, con height min 1px para visibilidad)
             top = min(y_o, y_c)
             bot = max(y_o, y_c)
             h = max(1.0, bot - top)
@@ -89,3 +96,6 @@ class CandleSeries:
                 bar_width, h,
                 color=color
             )
+
+            # Opcional: Data grouping para zoom out extremo (novel: aggregate si visible_count > 1000)
+            # Si querés, podemos agregar después: merge OHLC en grupos si muchas velas visibles

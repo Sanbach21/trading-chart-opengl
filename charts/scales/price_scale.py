@@ -1,21 +1,10 @@
-"""
-PriceScale
-
-Objetivo (mínimo sólido):
-- Mapear price <-> y(px) dentro del viewport del PLOT (no del chart completo).
-- Auto-scale basado SOLO en barras visibles (cuando le pases un proveedor de high/low).
-- Generación de ticks "nice" (redondeados) para el eje.
-
-Notas importantes para tu engine:
-- Tu renderer/shader está en coordenadas de app y usa y-down (origen arriba).
-- PriceScale soporta y_down configurable para que el mapping sea consistente.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
 from typing import Callable, Iterable, List, Optional, Sequence, Tuple
 
+from utils.math import clamp as _clamp  # ← AGREGADO AQUÍ PARA ARREGLAR EL ERROR
 
 @dataclass
 class PriceRange:
@@ -23,18 +12,11 @@ class PriceRange:
     high: float
 
 
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return lo if v < lo else hi if v > hi else v
-
-
 def _is_finite(x: float) -> bool:
     return math.isfinite(x)
 
 
 def _nice_step(raw_step: float) -> float:
-    """
-    Devuelve un step "bonito" (1, 2, 5 * 10^k) cercano al raw_step.
-    """
     if raw_step <= 0 or not _is_finite(raw_step):
         return 1.0
     exp = math.floor(math.log10(raw_step))
@@ -53,9 +35,6 @@ def _nice_step(raw_step: float) -> float:
 
 
 def _nice_bounds(lo: float, hi: float, step: float) -> Tuple[float, float]:
-    """
-    Expande límites a múltiplos del step.
-    """
     if step <= 0:
         return lo, hi
     lo2 = math.floor(lo / step) * step
@@ -64,21 +43,6 @@ def _nice_bounds(lo: float, hi: float, step: float) -> Tuple[float, float]:
 
 
 class PriceScale:
-    """
-    Maneja el mapeo vertical:
-
-        price_to_y(price) -> y px
-        y_to_price(y) -> price
-
-    y_down = True:
-        y = y0 (arriba) para high
-        y = y0 + h (abajo) para low
-
-    y_down = False (si algún día lo usás):
-        y = y0 (abajo) para low
-        y = y0 + h (arriba) para high
-    """
-
     def __init__(
         self,
         *,

@@ -131,6 +131,11 @@ class PriceAxisOverlay:
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
 
+        # Derivar tick_color de axis_band si no se especifica
+        if "tick_color" not in config and "axis_band" in overlay.config["colors"]:
+            band = overlay.config["colors"]["axis_band"]
+            self.style.tick_color = (band[0] + 0.5, band[1] + 0.5, band[2] + 0.5, band[3])  # aclarado
+
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
@@ -235,6 +240,11 @@ class TimeAxisOverlay:
             for k, v in config.items():
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
+
+        # Derivar tick_color de axis_band si no se especifica
+        if "tick_color" not in config and "axis_band" in overlay.config["colors"]:
+            band = overlay.config["colors"]["axis_band"]
+            self.style.tick_color = (band[0] + 0.5, band[1] + 0.5, band[2] + 0.5, band[3])  # aclarado
 
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()

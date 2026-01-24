@@ -15,6 +15,7 @@ C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\o
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\chart_overlay.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\crosshair.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\grid.py
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\tooltip.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\panes.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\scales
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\scales\__init__.py
@@ -161,15 +162,6 @@ Esta clase es el 'Core App' inicial:
 - Crea contexto OpenGL 3.3 core
 - Captura input y lo vuelca a InputState
 - Corre el loop: update -> render
-
-NOTA: Aquí todavía no existe Chart Engine. Por ahora validamos:
-- Renderer2D en píxeles
-- TimeScale (zoom/pan)
-- PriceScale (autoscale + price->y)
-- ChartOverlay (layout + grid + bandas de ejes)
-- PriceAxisOverlay (ticks + números)
-- TimeAxisOverlay (ticks + labels abajo)
-- CandleSeries (velas con data fake)
 """
 from __future__ import annotations
 
@@ -178,8 +170,13 @@ import glfw
 
 from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
-    glClear, glClearColor, glViewport,
-    glGetString, GL_VERSION, GL_RENDERER, GL_VENDOR,
+    glClear,
+    glClearColor,
+    glViewport,
+    glGetString,
+    GL_VERSION,
+    GL_RENDERER,
+    GL_VENDOR,
 )
 
 from app.input import InputState
@@ -189,6 +186,8 @@ from charts.scales.time_scale import TimeScale
 from charts.scales.price_scale import PriceScale
 from charts.overlays.chart_overlay import ChartOverlay
 from charts.overlays.axis import PriceAxisOverlay, TimeAxisOverlay
+from charts.overlays.crosshair import CrosshairOverlay, CrosshairStyle
+from charts.overlays.tooltip import TooltipOverlay
 
 from data.fake_ohlc import make_fake_ohlc
 from charts.series.candles import CandleSeries
@@ -196,7 +195,6 @@ from charts.series.candles import CandleSeries
 
 # -------------------------------------------------
 # Adapter: ChartOverlay / AxisOverlay -> Renderer2D
-# (convierte tuplas RGBA -> Color y soporta width=)
 # -------------------------------------------------
 class _OverlayRendererAdapter:
     def __init__(self, renderer: Renderer2D):
@@ -230,7 +228,7 @@ class _OverlayRendererAdapter:
 
 
 class GLFWWindow:
-    def __init__(self, title: str, width: int, height: int) -> None:
+    def __init__(self, title: str = "OpenGL Trading Core - Demo", width: int = 1280, height: int = 720) -> None:
         # ----------------------------
         # Scales
         # ----------------------------
@@ -238,10 +236,11 @@ class GLFWWindow:
         self.price_scale = PriceScale()
 
         # ----------------------------
-        # Serie + data fake
+        # Serie + data fake (con timestamps)
         # ----------------------------
         self.series = CandleSeries(make_fake_ohlc(500))
         self.total_bars = len(self.series.data)
+        self.time_scale.set_timestamps([bar.ts for bar in self.series.data])
 
         # ----------------------------
         # State
@@ -266,45 +265,37 @@ class GLFWWindow:
                 "side": "right",
                 "width_px": 100,
                 "show": True,
-
-                "font_size_px": 20,
+                "font_size_px": 10,
                 "font_thickness_px": 2,
                 "font_color": (1, 1, 1, 1),
                 "padding_px": 10,
-
                 "gridline_in_plot": True,
-                "gridline_color": (0.2, 0.2, 0.2, 0.25),
-                "gridline_width": 1,
-
+                "gridline_color": (0.8, 0.8, 0.8, 0.50),
+                "gridline_width": 2,
                 "tick_in_axis": True,
-                "tick_length_px": 10,
-                "tick_width": 2,
-                "tick_color": (0.7, 0.7, 0.7, 0.9),
-
+                "tick_length_px": 7,
+                "tick_width": 1,
+                "tick_color": (0.9, 0.9, 0.9, 1.0),  # más claro para que se vea bien
                 "decimals": 2,
-                "target_ticks": 6,
+                "target_ticks": 20,
             },
-
             "time_axis": {
                 "height_px": 34,
                 "show": True,
-
-                "font_size_px": 14,
+                "font_size_px": 10,
                 "font_thickness_px": 2,
                 "font_color": (1, 1, 1, 1),
                 "padding_px": 6,
-
                 "tick_in_axis": True,
-                "tick_length_px": 10,
+                "tick_length_px": 7,
                 "tick_width": 1,
-                "tick_color": (0.7, 0.7, 0.7, 0.9),
-
-                "gridline_in_plot": False,
+                "tick_color": (0.9, 0.9, 0.9, 1.0),  # más claro
+                "gridline_in_plot": True,
+                "gridline_color": (0.8, 0.8, 0.8, 0.50),
                 "target_ticks": 8,
             },
-
-            "grid": {"show": None, "vx": 80, "hy": 60, "line_width": 1},
-            "padding": {"left": 0, "right": 60, "top": 0, "bottom": 30},
+            "grid": {"show": True, "vx": 80, "hy": 60, "line_width": 1},
+            "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
             "coords": {"y_down": True},
         }
 
@@ -315,7 +306,7 @@ class GLFWWindow:
         self.overlay_renderer = _OverlayRendererAdapter(self.renderer)
 
         # ----------------------------
-        # Axis overlays (DESPUÉS de overlay + config)
+        # Axis overlays
         # ----------------------------
         self.price_axis_overlay = PriceAxisOverlay(
             self.overlay,
@@ -327,6 +318,30 @@ class GLFWWindow:
             self.overlay,
             self.time_scale,
             config=self.chart_config["time_axis"],
+        )
+
+        # ----------------------------
+        # Crosshair
+        # ----------------------------
+        self.crosshair = CrosshairOverlay(
+            overlay=self.overlay,
+            input_state=self.input,
+            series=self.series,
+            style=CrosshairStyle(
+                color=(0.1, 0.1, 0.1, 0.55),
+                width=1.2
+            )
+        )
+
+        # ----------------------------
+        # Tooltip
+        # ----------------------------
+        self.tooltip = TooltipOverlay(
+            overlay=self.overlay,
+            time_scale=self.time_scale,
+            input_state=self.input,
+            series=self.series,
+            max_distance_px=20.0
         )
 
     # -------------------------------------------------
@@ -398,11 +413,11 @@ class GLFWWindow:
             version = glGetString(GL_VERSION)
             vendor = glGetString(GL_VENDOR)
             renderer = glGetString(GL_RENDERER)
-            print("OpenGL:", version.decode() if version else version)
-            print("Vendor:", vendor.decode() if vendor else vendor)
-            print("Renderer:", renderer.decode() if renderer else renderer)
+            print("OpenGL:", version.decode() if version else "Unknown")
+            print("Vendor:", vendor.decode() if vendor else "Unknown")
+            print("Renderer:", renderer.decode() if renderer else "Unknown")
         except Exception:
-            pass
+            print("No se pudo obtener info de OpenGL")
 
     # -------------------------------------------------
     # Main loop
@@ -418,25 +433,23 @@ class GLFWWindow:
             now = time.perf_counter()
             dt = now - last
             last = now
-            _ = dt
 
             self.input.begin_frame()
             glfw.poll_events()
 
-            # Chart rect
+            # Actualizar layout del chart
             self.overlay.set_view(0.0, 0.0, float(self.width), float(self.height))
             plot_x, plot_y, plot_w, plot_h = self.overlay.get_plot_rect()
 
-            # Scales
+            # Actualizar escalas
             self.time_scale.set_view(plot_x, plot_w)
-            self.time_scale.set_total_bars(self.total_bars)
             self.price_scale.set_viewport(plot_x, plot_y, plot_w, plot_h)
 
-            # Zoom (rueda)
+            # Zoom con rueda
             if self.input.mouse.scroll_y != 0.0:
                 self.time_scale.zoom_at_x(self.input.mouse.x, self.input.mouse.scroll_y)
 
-            # Pan (drag)
+            # Pan con drag
             if self.input.mouse.left and not self._dragging:
                 self._dragging = True
             if not self.input.mouse.left:
@@ -449,33 +462,37 @@ class GLFWWindow:
                 glfw.set_window_should_close(self._window, True)
 
             # ---------------- Render ----------------
-            glClearColor(0.1, 0.1, 0.1, 1.0)
+            glClearColor(0.0, 0.0, 0.0, 1.0)  # Fondo negro puro
             glClear(GL_COLOR_BUFFER_BIT)
 
             self.renderer.begin_frame(self.width, self.height)
 
-            # Background
-            self.renderer.draw_rect_px(
-                0.0, 0.0,
-                float(self.width), float(self.height),
-                Color(0.01, 0.01, 0.01, 0.5)
-            )
+            
 
-            # Overlay (grid + bands)
-            self.overlay.draw(self.overlay_renderer)
-
-            # Candles + autoscale
-            vr = self.time_scale.get_visible_range()
-            vs = max(0, int(vr.start))
-            ve = min(self.total_bars - 1, int(vr.end))
-
-            if ve >= vs:
-                self.price_scale.autoscale_from_provider(vs, ve, self.series.get_high_low)
-                self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
-
-            # Axes overlays (ticks + labels)
+            # 2. Ejes con ticks, labels y gridline_in_plot (encima de las bandas)
             self.price_axis_overlay.draw(self.overlay_renderer)
             self.time_axis_overlay.draw(self.overlay_renderer)
+
+            # 1. Bandas de fondo y separadores (primero)
+            self.overlay.draw(self.overlay_renderer)
+
+            # 3. Velas + autoscale
+            vr = self.time_scale.get_visible_range()
+            vs = max(0, vr.start_idx)
+            ve = min(self.total_bars - 1, vr.end_idx)
+
+            if ve >= vs:
+                self.price_scale.autoscale_from_provider(
+                    vs, ve,
+                    lambda i: self.series.get_high_low(i)
+                )
+                self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
+
+            # 4. Tooltip (después de velas, antes del crosshair)
+            self.tooltip.draw(self.renderer)
+
+            # 5. Crosshair encima de todo
+            self.crosshair.draw(self.renderer)
 
             self.renderer.end_frame()
             glfw.swap_buffers(self._window)
@@ -491,6 +508,14 @@ class GLFWWindow:
                 self._window = None
             glfw.terminate()
 
+
+def main() -> None:
+    win = GLFWWindow(title="OpenGL Trading Core - Demo", width=1280, height=720)
+    win.run()
+
+
+if __name__ == "__main__":
+    main()
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\__init__.py
 ================================================================================
@@ -525,7 +550,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple, List
-
+from datetime import datetime  # ← ¡IMPORTANTE! Agregado aquí
 
 # Rect = (x, y, w, h)
 Rect = Tuple[float, float, float, float]
@@ -725,7 +750,7 @@ class PriceAxisOverlay:
 
 
 # -----------------------------
-# Time Axis Overlay
+# Time Axis Overlay (versión completa y corregida)
 # -----------------------------
 @dataclass
 class TimeAxisStyle:
@@ -768,13 +793,14 @@ class TimeAxisOverlay:
             return
 
         vr = self.time_scale.get_visible_range()
-        vs = int(vr.start)
-        ve = int(vr.end)
+        vs = vr.start_idx
+        ve = vr.end_idx
+
         if ve <= vs:
             return
 
         target = max(2, int(self.style.target_ticks))
-        step = max(1, int((ve - vs) / (target - 1)))
+        step = max(1, int((ve - vs) / (target - 1)) or 1)
 
         fstyle = SevenSegStyle(
             size_px=float(self.style.font_size_px),
@@ -785,16 +811,12 @@ class TimeAxisOverlay:
         )
         pad = float(self.style.padding_px)
 
-        def index_to_x(i: int) -> float:
-            if hasattr(self.time_scale, "index_to_x"):
-                return float(self.time_scale.index_to_x(i))
-            if hasattr(self.time_scale, "bar_to_x"):
-                return float(self.time_scale.bar_to_x(i))
-            t = 0.0 if ve == vs else (i - vs) / (ve - vs)
-            return float(plot_x + t * plot_w)
-
         for i in range(vs, ve + 1, step):
-            x = index_to_x(i)
+            if i >= len(self.time_scale._timestamps):
+                continue
+
+            x = self.time_scale.index_to_x(i)
+            ts = self.time_scale._timestamps[i]
 
             if self.style.gridline_in_plot:
                 r.draw_line_px(
@@ -814,12 +836,14 @@ class TimeAxisOverlay:
                     width=float(self.style.tick_width),
                 )
 
-            label = f"{int(i)}"
+            # Label con fecha real
+            label = self._format_time(ts)
             tw, th = self.font.measure_text(label, fstyle)
 
             tx = x - tw * 0.5
             ty = (ay + ah) - pad - th
 
+            # Evitar que se salga del área
             if tx < ax + pad:
                 tx = ax + pad
             if tx + tw > ax + aw - pad:
@@ -827,12 +851,15 @@ class TimeAxisOverlay:
 
             self.font.draw_text(r, tx, ty, label, fstyle)
 
+    def _format_time(self, ts: datetime) -> str:
+        # Puedes hacer esto configurable después
+        return ts.strftime("%Y-%m-%d %H:%M")
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\chart_overlay.py
 ================================================================================
 # charts/overlays/chart_overlay.py
 from dataclasses import dataclass
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple, Any, Optional
 
 Rect = Tuple[float, float, float, float]  # (x, y, w, h)
 
@@ -842,7 +869,7 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 
 
 def _merge_defaults(user_cfg: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge shallow + one-level nested dicts, so user cfg overrides defaults."""
+    """Merge shallow + one-level nested dicts, user overrides defaults."""
     out = dict(defaults)
     for k, v in (user_cfg or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
@@ -864,252 +891,298 @@ class OverlayLayout:
 
 class ChartOverlay:
     """
-    ChartOverlay = layout + grid + ejes (bandas).
-    NO dibuja series (velas/lineas).
+    Solo layout + separadores.
+    NO dibuja bandas de fondo (rectángulos negros) para los ejes.
+    Los ticks, labels y gridline_in_plot los dibuja después el axis overlay.
     """
-
     DEFAULT_CONFIG = {
         "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
-        "price_axis": {"show": True, "side": "right", "width_px": 90, "separator_width": 5},
-        "time_axis": {"show": True, "height_px": 44, "separator_width": 5},
-        "grid": {"show": True, "vx": 80, "hy": 20, "line_width": 0.5},
-        "colors": {
-            "grid": (0.1, 0.7, 0.1, 1.0),
-            "axis_band": (1.0, 1.0, 0.0, 1.0),
-            "axis_separator": (0.5, 0.5, 0.5, 1.0),
+        "price_axis": {
+            "show": True,
+            "side": "right",
+            "width_px": 90,
+            "separator_width": 1,
         },
-        "coords": {"y_down": False},  # origen arriba si True (típico UI)
+        "time_axis": {
+            "show": True,
+            "height_px": 34,
+            "separator_width": 1,
+        },
+        "colors": {
+            "axis_separator": (0.9, 0.9, 0.9, 1.0),  # gris tenue
+        },
+        "coords": {"y_down": True},
     }
 
-    def __init__(self, time_scale, price_scale, config: Dict[str, Any] = None):
+    def __init__(self, time_scale, price_scale, config: Optional[Dict[str, Any]] = None):
         self.time_scale = time_scale
         self.price_scale = price_scale
         self.config = _merge_defaults(config or {}, self.DEFAULT_CONFIG)
         self._x = self._y = self._w = self._h = 0.0
-        self._layout: OverlayLayout | None = None
-        self._y_down = bool(self.config["coords"].get("y_down", False))
+        self._layout: Optional[OverlayLayout] = None
+        self._y_down = bool(self.config["coords"].get("y_down", True))
 
     # ----------------------------
     # Public API
     # ----------------------------
     def set_view(self, x: float, y: float, w: float, h: float) -> None:
-        """Define el rect del chart (área total asignada)."""
+        """Define el rectángulo total asignado al chart."""
         self._x, self._y, self._w, self._h = float(x), float(y), float(w), float(h)
-        self._layout = None  # invalidate
+        self._layout = None  # invalidate cache
 
     def get_layout(self) -> OverlayLayout:
-        """Devuelve layout calculado (cacheado)."""
+        """Calcula y cachea el layout."""
         if self._layout is None:
             self._layout = self._compute_layout()
 
-            # Conectamos escalas al PLOT (no al chart completo)
+            # Conectar escalas al área de plot
             px, py, pw, ph = self._layout.plot_rect
-
-            # TimeScale en tu engine usa set_view(x, w)
-            if hasattr(self.time_scale, "set_view"):
-                self.time_scale.set_view(px, pw)
-
-            # PriceScale debería tener set_viewport(x, y, w, h)
+            self.time_scale.set_view(px, pw)
             if hasattr(self.price_scale, "set_viewport"):
                 self.price_scale.set_viewport(px, py, pw, ph)
 
         return self._layout
 
     def get_plot_rect(self) -> Rect:
-        """Devuelve el rectángulo del área de plot (sin ejes)."""
+        """Rectángulo útil para dibujar series, crosshair, etc."""
         return self.get_layout().plot_rect
 
     def draw(self, renderer) -> None:
-        """Dibuja overlay: grid + bandas de ejes."""
+        """Dibuja SOLO los separadores (líneas grises)."""
         layout = self.get_layout()
 
-        if self.config["grid"]["show"]:
-            self._draw_grid(renderer, layout.plot_rect)
-
-        # Bandas y separadores de ejes
         if self.config["price_axis"]["show"]:
-            self._draw_price_axis_band(renderer, layout.price_axis_rect, layout.plot_rect)
+            self._draw_price_axis_separator(renderer, layout.price_axis_rect, layout.plot_rect)
 
         if self.config["time_axis"]["show"]:
-            self._draw_time_axis_band(renderer, layout.time_axis_rect, layout.plot_rect)
+            self._draw_time_axis_separator(renderer, layout.time_axis_rect, layout.plot_rect)
 
     # ----------------------------
-    # Layout
+    # Layout calculation
     # ----------------------------
     def _compute_layout(self) -> OverlayLayout:
         pad = self.config["padding"]
-        px_l, px_r = float(pad["left"]), float(pad["right"])
-        px_t, px_b = float(pad["top"]), float(pad["bottom"])
+        left, right = float(pad["left"]), float(pad["right"])
+        top, bottom = float(pad["top"]), float(pad["bottom"])
 
         chart_rect: Rect = (self._x, self._y, self._w, self._h)
 
-        # Padding vertical según sistema de coordenadas
+        inner_x = self._x + left
+        inner_w = max(0.0, self._w - left - right)
+
         if self._y_down:
-            # Origen arriba: y crece hacia abajo → el "top" empuja hacia abajo
-            inner_x = self._x + px_l
-            inner_y = self._y + px_t
-            inner_w = max(0.0, self._w - (px_l + px_r))
-            inner_h = max(0.0, self._h - (px_t + px_b))
+            inner_y = self._y + top
+            inner_h = max(0.0, self._h - top - bottom)
         else:
-            # Origen abajo: y crece hacia arriba (comportamiento original)
-            inner_x = self._x + px_l
-            inner_y = self._y + px_b
-            inner_w = max(0.0, self._w - (px_l + px_r))
-            inner_h = max(0.0, self._h - (px_t + px_b))
+            inner_y = self._y + bottom
+            inner_h = max(0.0, self._h - top - bottom)
 
-        pa, ta = self.config["price_axis"], self.config["time_axis"]
-        price_axis_w = float(pa["width_px"]) if pa["show"] else 0.0
-        time_axis_h = float(ta["height_px"]) if ta["show"] else 0.0
+        pa = self.config["price_axis"]
+        ta = self.config["time_axis"]
+        price_w = float(pa["width_px"]) if pa["show"] else 0.0
+        time_h = float(ta["height_px"]) if ta["show"] else 0.0
 
-        # Layout vertical (plot vs time axis) según sistema
+        # Time axis (abajo)
         if self._y_down:
-            # y-down: el time-axis "abajo" está en el borde inferior (mayor y)
             plot_y = inner_y
-            plot_h = max(0.0, inner_h - time_axis_h)
+            plot_h = max(0.0, inner_h - time_h)
             time_y = inner_y + plot_h
-            time_axis_rect: Rect = (
-                (inner_x, time_y, inner_w, time_axis_h) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
-            )
         else:
-            # y-up: el time-axis "abajo" empieza en inner_y
-            plot_h = max(0.0, inner_h - time_axis_h)
-            plot_y = inner_y + time_axis_h
-            time_axis_rect: Rect = (
-                (inner_x, inner_y, inner_w, time_axis_h) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
-            )
+            plot_h = max(0.0, inner_h - time_h)
+            plot_y = inner_y + time_h
+            time_y = inner_y
 
-        # Layout horizontal (plot vs price axis)
+        time_rect: Rect = (
+            (inner_x, time_y, inner_w, time_h) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
+        )
+
+        # Price axis
         side = (pa["side"] or "right").lower()
-        if pa["show"] and side == "left":
-            price_axis_rect: Rect = (inner_x, plot_y, price_axis_w, plot_h)
-            plot_rect: Rect = (inner_x + price_axis_w, plot_y, max(0.0, inner_w - price_axis_w), plot_h)
+        if side == "left":
+            price_rect: Rect = (inner_x, plot_y, price_w, plot_h)
+            plot_rect: Rect = (inner_x + price_w, plot_y, max(0.0, inner_w - price_w), plot_h)
         else:
-            plot_rect: Rect = (inner_x, plot_y, max(0.0, inner_w - price_axis_w), plot_h)
-            price_axis_rect: Rect = (
-                (inner_x + plot_rect[2], plot_y, price_axis_w, plot_h) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
+            plot_rect: Rect = (inner_x, plot_y, max(0.0, inner_w - price_w), plot_h)
+            price_rect: Rect = (
+                (inner_x + plot_rect[2], plot_y, price_w, plot_h) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
             )
 
         return OverlayLayout(
             chart_rect=chart_rect,
             plot_rect=plot_rect,
-            price_axis_rect=price_axis_rect,
-            time_axis_rect=time_axis_rect,
+            price_axis_rect=price_rect,
+            time_axis_rect=time_rect,
         )
 
     # ----------------------------
-    # Drawing helpers (renderer-agnostic)
+    # Drawing helpers
     # ----------------------------
-    def _draw_rect(self, renderer, rect: Rect, color=None) -> None:
-        """Dibuja un rect de fondo si el renderer lo soporta."""
-        x, y, w, h = rect
-        if w <= 0 or h <= 0:
-            return
-
-        if hasattr(renderer, "draw_rect_px"):
-            try:
-                renderer.draw_rect_px(x, y, w, h, color=color)
-            except TypeError:
-                renderer.draw_rect_px(x, y, w, h)
-        elif hasattr(renderer, "rect"):
-            try:
-                renderer.rect(x, y, w, h, color=color)
-            except TypeError:
-                renderer.rect(x, y, w, h)
-
-    def _draw_line(self, renderer, x1, y1, x2, y2, width=1, color=None) -> None:
-        """Dibuja línea si el renderer lo soporta."""
-        if hasattr(renderer, "draw_line_px"):
-            try:
-                renderer.draw_line_px(x1, y1, x2, y2, color=color, width=width)
-            except TypeError:
-                renderer.draw_line_px(x1, y1, x2, y2, color)
-        elif hasattr(renderer, "line"):
-            try:
-                renderer.line(x1, y1, x2, y2, color=color, width=width)
-            except TypeError:
-                renderer.line(x1, y1, x2, y2, color)
+    def _draw_line(self, renderer, x1: float, y1: float, x2: float, y2: float,
+                   width: float = 1.0, color: Any = None) -> None:
+        renderer.draw_line_px(x1, y1, x2, y2, color=color, width=width)
 
     # ----------------------------
-    # Grid / Axis bands
+    # Solo separadores (sin bandas)
     # ----------------------------
-    def _draw_grid(self, renderer, plot_rect: Rect) -> None:
-       
-        """Dibuja la cuadrícula principal dentro del área de plot."""
-        x, y, w, h = plot_rect
-        if w <= 0 or h <= 0:
-            return
-
-        grid_cfg = self.config["grid"]
-        step_x = max(10.0, float(grid_cfg["vx"]))
-        step_y = max(10.0, float(grid_cfg["hy"]))
-        lw = max(1, int(grid_cfg["line_width"]))
-        col = self.config["colors"]["grid"]
-
-        # Vertical lines
-        gx = x
-        while gx <= x + w:
-            
-            self._draw_line(renderer, gx, y, gx, y + h, width=lw, color=col)
-            gx += step_x
-
-        # Horizontal lines
-        gy = y
-        while gy <= y + h:
-            self._draw_line(renderer, x, gy, x + w, gy, width=lw, color=col)
-            gy += step_y
-
-    def _draw_price_axis_band(self, renderer, axis_rect: Rect, plot_rect: Rect) -> None:
-        """Dibuja la banda y separador del eje de precios."""
-        band_col = self.config["colors"]["axis_band"]
-        sep_col = self.config["colors"]["axis_separator"]
-        pa = self.config["price_axis"]
-        sep_w = max(1, int(pa["separator_width"]))
-
-        self._draw_rect(renderer, axis_rect, color=band_col)
-
-        # Separador entre plot y eje
+    def _draw_price_axis_separator(self, renderer, axis_rect: Rect, plot_rect: Rect) -> None:
         ax, ay, aw, ah = axis_rect
         px, py, pw, ph = plot_rect
-        side = pa["side"].lower()
+        side = self.config["price_axis"]["side"].lower()
+        sep_w = self.config["price_axis"]["separator_width"]
+        sep_col = self.config["colors"]["axis_separator"]
 
         if side == "left":
             x_sep = ax + aw
-            self._draw_line(renderer, x_sep, py, x_sep, py + ph, width=sep_w, color=sep_col)
         else:
             x_sep = ax
-            self._draw_line(renderer, x_sep, py, x_sep, py + ph, width=sep_w, color=sep_col)
 
-    def _draw_time_axis_band(self, renderer, axis_rect: Rect, plot_rect: Rect) -> None:
-        """Dibuja la banda inferior y el separador horizontal del eje de tiempo."""
-        band_col = self.config["colors"]["axis_band"]
-        sep_col = self.config["colors"]["axis_separator"]
-        ta = self.config["time_axis"]
-        sep_w = max(1, int(ta["separator_width"]))
+        self._draw_line(renderer, x_sep, py, x_sep, py + ph, width=sep_w, color=sep_col)
 
-        self._draw_rect(renderer, axis_rect, color=band_col)
-
-        # Separador entre plot y time axis
+    def _draw_time_axis_separator(self, renderer, axis_rect: Rect, plot_rect: Rect) -> None:
         tx, ty, tw, th = axis_rect
         px, py, pw, ph = plot_rect
+        sep_w = self.config["time_axis"]["separator_width"]
+        sep_col = self.config["colors"]["axis_separator"]
 
         if self._y_down:
-            y_sep = ty  # borde superior de la banda
+            y_sep = ty
         else:
-            y_sep = ty + th  # borde superior cuando y-up
+            y_sep = ty + th
 
         self._draw_line(renderer, px, y_sep, px + pw, y_sep, width=sep_w, color=sep_col)
-
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\crosshair.py
 ================================================================================
-"""Crosshair overlay (placeholder)."""
+# charts/overlays/crosshair.py
 from __future__ import annotations
+from dataclasses import dataclass
+from typing import Tuple
+
+from render.renderer import Renderer2D, Color
+from app.input import InputState
+from charts.series.candles import CandleSeries
+from charts.overlays.chart_overlay import ChartOverlay, Rect
+from charts.overlays.axis import SevenSegStyle, SevenSegFont
 
 
-class Crosshair:
-    def __init__(self) -> None:
-        pass
+@dataclass
+class CrosshairStyle:
+    color: Tuple[float, float, float, float] = (0.9, 0.9, 0.9, 0.6)
+    width: float = 1.0
+    snap_to_bar: bool = False  # futura fase: alinear a centro de barra
 
+
+class CrosshairOverlay:
+    def __init__(
+        self,
+        overlay: ChartOverlay,
+        input_state: InputState,
+        series: CandleSeries,
+        style: CrosshairStyle | None = None
+    ) -> None:
+        self.overlay = overlay
+        self.input = input_state
+        self.series = series
+        self.style = style or CrosshairStyle()
+        self.snap_enabled = True
+        self.snap_tolerance_px = 30.0
+
+
+    def draw(self, renderer: Renderer2D) -> None:
+        layout = self.overlay.get_layout()
+        plot_rect = layout.plot_rect  # (x, y, w, h)
+        px, py, pw, ph = plot_rect
+
+        if pw <= 0 or ph <= 0:
+            return
+
+        mx = self.input.mouse.x
+        my = self.input.mouse.y
+
+        inside = (px <= mx <= px + pw) and (py <= my <= py + ph)
+        if not inside:
+            return
+
+        col = Color(*self.style.color)
+
+        # SNAP: encontrar la vela más cercana
+        snap_x = mx
+        if self.snap_enabled:
+            vr = self.overlay.time_scale.get_visible_range()
+            vs = max(0, vr.start_idx)
+            ve = min(len(self.series.data) - 1, vr.end_idx)
+
+            if ve >= vs:
+                closest_idx = None
+                min_dist = float('inf')
+
+                for i in range(vs, ve + 1):
+                    candle_x = self.overlay.time_scale.index_to_x(i)
+                    dist = abs(candle_x - mx)
+                    if dist < min_dist:
+                        min_dist = dist
+                        closest_idx = i
+
+                if closest_idx is not None and min_dist <= self.snap_tolerance_px:
+                    snap_x = self.overlay.time_scale.index_to_x(closest_idx)
+
+        # Línea vertical (con snap)
+        renderer.draw_line_px(
+            snap_x, py,
+            snap_x, py + ph,
+            color=col,
+            width=self.style.width
+        )
+
+        # Línea horizontal (sigue el mouse en Y)
+        renderer.draw_line_px(
+            px, my,
+            px + pw, my,
+            color=col,
+            width=self.style.width
+        )
+
+        # Etiquetas flotantes
+        # Precio en Y (derecha del eje)
+        price_y = my
+        # Nota: si PriceScale no tiene y_to_price, debes agregarlo (ver abajo)
+        price = self.overlay.price_scale.y_to_price(price_y)
+        price_str = f"{price:,.2f}"
+
+        # Tiempo en X (abajo del eje)
+        time_x = snap_x
+        time_ts = self.overlay.time_scale.x_to_time(time_x)
+        time_str = time_ts.strftime("%Y-%m-%d %H:%M")
+
+        # Dibujar etiqueta precio (derecha del eje)
+        price_font = SevenSegStyle(size_px=13.0, thickness_px=1.8, color=(1,1,1,1))
+        price_w, price_h = SevenSegFont().measure_text(price_str, price_font)
+        renderer.draw_rect_px(
+            px + pw + 5, price_y - price_h / 2,
+            price_w + 10, price_h + 4,
+            Color(0.1, 0.1, 0.15, 0.9)
+        )
+        SevenSegFont().draw_text(
+            renderer,
+            px + pw + 10, price_y - price_h / 2 + 2,
+            price_str,
+            price_font
+        )
+
+        # Dibujar etiqueta tiempo (abajo del eje)
+        time_font = SevenSegStyle(size_px=13.0, thickness_px=1.8, color=(1,1,1,1))
+        time_w, time_h = SevenSegFont().measure_text(time_str, time_font)
+        renderer.draw_rect_px(
+            time_x - time_w / 2 - 5, py + ph + 5,
+            time_w + 10, time_h + 4,
+            Color(0.1, 0.1, 0.15, 0.9)
+        )
+        SevenSegFont().draw_text(
+            renderer,
+            time_x - time_w / 2, py + ph + 7,
+            time_str,
+            time_font
+        )
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\grid.py
 ================================================================================
@@ -1121,6 +1194,173 @@ class Grid:
     def __init__(self) -> None:
         pass
 
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\tooltip.py
+================================================================================
+# charts/overlays/tooltip.py
+from __future__ import annotations
+
+from typing import Optional, Tuple
+from datetime import datetime
+
+from render.renderer import Renderer2D, Color
+from app.input import InputState
+from charts.scales.time_scale import TimeScale
+from charts.series.candles import CandleSeries
+from charts.overlays.axis import SevenSegStyle, SevenSegFont
+
+
+class TooltipOverlay:
+    """
+    Overlay que muestra tooltip con OHLC + fecha cuando el mouse está cerca de una vela.
+    Modular e independiente.
+    """
+
+    def __init__(
+        self,
+        overlay,
+        time_scale: TimeScale,
+        input_state: InputState,
+        series: CandleSeries,
+        max_distance_px: float = 20.0,
+    ) -> None:
+        self.overlay = overlay
+        self.time_scale = time_scale
+        self.input = input_state
+        self.series = series
+
+        self.font = SevenSegFont()
+
+        self.style = SevenSegStyle(
+            size_px=13.0,
+            thickness_px=1.8,
+            spacing_px=1.5,
+            color=(0.95, 0.95, 1.0, 1.0),  # blanco-azulado suave
+        )
+
+        self.bg_color = Color(0.05, 0.05, 0.08, 0.92)      # negro muy oscuro semi-transparente
+        self.border_color = Color(0.5, 0.6, 0.8, 0.7)      # borde gris-azulado sutil
+        self.padding = 8.0
+        self.max_distance_px = max_distance_px
+
+    def draw(self, renderer: Renderer2D) -> None:
+        mx = self.input.mouse.x
+        my = self.input.mouse.y
+
+        # Obtenemos el rectángulo del área de plot (para saber si estamos dentro)
+        # Nota: asumimos que el ChartOverlay tiene get_plot_rect()
+        # Si no lo tiene, podemos pasarlo como parámetro en __init__
+        from charts.overlays.chart_overlay import ChartOverlay
+        # Temporal: necesitamos el layout → lo ideal es pasarlo como parámetro o tener una referencia
+        # Por ahora, asumimos que se puede acceder desde otro lugar o lo pasamos después
+
+        # Buscar la vela más cercana
+        vr = self.time_scale.get_visible_range()
+        vs = max(0, vr.start_idx)
+        ve = min(len(self.series.data) - 1, vr.end_idx)
+
+        if ve < vs:
+            return
+
+        closest_idx: Optional[int] = None
+        min_dist = float('inf')
+
+        for i in range(vs, ve + 1):
+            candle_x = self.time_scale.index_to_x(i)
+            dist = abs(candle_x - mx)
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx = i
+
+        if closest_idx is None or min_dist > self.max_distance_px:
+            return
+
+        # Obtenemos la vela
+        bar = self.series.data[closest_idx]
+        prev_close = self.series.data[closest_idx - 1].c if closest_idx > 0 else bar.c
+        change_pct = ((bar.c - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+                # Colores dinámicos según vela alcista/bajista
+        is_bullish = bar.c >= bar.o
+        tooltip_bg = Color(0.04, 0.15, 0.08, 0.92) if is_bullish else Color(0.15, 0.04, 0.04, 0.92)
+        tooltip_border = Color(0.3, 0.9, 0.3, 0.75) if is_bullish else Color(0.9, 0.3, 0.3, 0.75)
+        text_color = (0.7, 1.0, 0.7, 1.0) if is_bullish else (1.0, 0.7, 0.7, 1.0)
+
+                # Determinar color según vela alcista/bajista
+        is_bullish = bar.c >= bar.o
+        tooltip_bg_color = Color(0.05, 0.12, 0.08, 0.92) if is_bullish else Color(0.12, 0.05, 0.05, 0.92)
+        tooltip_border_color = Color(0.4, 0.8, 0.4, 0.7) if is_bullish else Color(0.8, 0.4, 0.4, 0.7)
+
+        # Preparar las líneas del tooltip
+        lines = [
+            bar.ts.strftime("%Y-%m-%d %H:%M"),
+            f"O: {bar.o:,.2f}",
+            f"H: {bar.h:,.2f}",
+            f"L: {bar.l:,.2f}",
+            f"C: {bar.c:,.2f}",
+            f"Chg: {change_pct:+.2f}%",
+        ]
+
+        # Calcular dimensiones
+        max_width = 0.0
+        line_height = 16.0  # aproximado, puedes medirlo
+        total_height = len(lines) * line_height + 2 * self.padding
+
+        for line in lines:
+            w, _ = self.font.measure_text(line, self.style)
+            max_width = max(max_width, w)
+
+        tooltip_width = max_width + 2 * self.padding
+        tooltip_height = total_height
+
+        # Posición relativa al mouse
+        tx = mx + 20
+        ty = my - tooltip_height - 15
+
+        # Ajustar si se sale de pantalla (muy básico, puedes mejorarlo)
+        if tx + tooltip_width > 1280:  # ancho aproximado ventana
+            tx = mx - tooltip_width - 20
+        if ty < 0:
+            ty = my + 30
+
+                    # Dibujar borde + fondo con colores dinámicos
+        renderer.draw_rect_px(
+            tx - 2, ty - 2,
+            tooltip_width + 4, tooltip_height + 4,
+            tooltip_border
+        )
+        renderer.draw_rect_px(
+            tx, ty,
+            tooltip_width, tooltip_height,
+            tooltip_bg
+        )   
+
+                # Dibujar texto línea por línea con color dinámico según vela
+        text_color = (0.6, 1.0, 0.6, 1.0) if is_bullish else (1.0, 0.6, 0.6, 1.0)
+        temp_style = SevenSegStyle(
+            size_px=self.style.size_px,
+            thickness_px=self.style.thickness_px,
+            spacing_px=self.style.spacing_px,
+            color=text_color
+        )
+
+                # Texto con color dinámico
+        temp_style = SevenSegStyle(
+            size_px=self.style.size_px,
+            thickness_px=self.style.thickness_px,
+            spacing_px=self.style.spacing_px,
+            color=text_color
+        )
+
+        cursor_y = ty + self.padding
+        for line in lines:
+            self.font.draw_text(
+                renderer,
+                tx + self.padding,
+                cursor_y,
+                line,
+                temp_style  # ← Cambiado: usamos temp_style
+            )
+            cursor_y += line_height
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\panes.py
 ================================================================================
@@ -1147,7 +1387,6 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\ch
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\scales\price_scale.py
 ================================================================================
-# charts/scales/price_scale.py
 """
 PriceScale
 
@@ -1243,6 +1482,12 @@ class PriceScale:
         self.view_w: float = 1.0
         self.view_h: float = 1.0
 
+        # Guardamos también para y_to_price
+        self.plot_x: float = 0.0
+        self.plot_y: float = 0.0
+        self.plot_w: float = 1.0
+        self.plot_h: float = 1.0
+
         # Coordinate system
         self.y_down: bool = bool(y_down)
 
@@ -1265,6 +1510,12 @@ class PriceScale:
         self.view_y = float(y)
         self.view_w = max(1.0, float(w))
         self.view_h = max(1.0, float(h))
+
+        # Guardamos para y_to_price
+        self.plot_x = self.view_x
+        self.plot_y = self.view_y
+        self.plot_w = self.view_w
+        self.plot_h = self.view_h
 
     def set_coord_system(self, *, y_down: bool) -> None:
         self.y_down = bool(y_down)
@@ -1474,130 +1725,114 @@ class PriceScale:
             it += 1
 
         return ticks
-
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\scales\time_scale.py
 ================================================================================
-"""TimeScale (placeholder).
-
-Objetivo:
-- index_to_x(i)
-- x_to_index(x)
-- visible_range (bar index start/end)
-- spacing/zoom centrado en cursor
-"""
-
-# python
+# charts/scales/time_scale.py
 from __future__ import annotations
-
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import List
 
 
 @dataclass
 class VisibleRange:
-    start: int
-    end: int
+    start_ts: datetime
+    end_ts: datetime
+    start_idx: int
+    end_idx: int
 
 
 class TimeScale:
     def __init__(self, bar_spacing: float = 10.0, right_offset: float = 0.0) -> None:
         self.bar_spacing = float(bar_spacing)
         self.right_offset = float(right_offset)
-
         self.total_bars: int = 0
         self.view_x: float = 0.0
         self.view_w: float = 1.0
+        self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
+        self._timestamps: List[datetime] = []
 
-        self._visible = VisibleRange(0, -1)
-
-    def set_view(self, x: float, w: float) -> None:
-        self.view_x = float(x)
-        self.view_w = max(1.0, float(w))
+    def set_timestamps(self, ts_list: List[datetime]) -> None:
+        self._timestamps = ts_list[:]
+        self.total_bars = len(ts_list)
         self._recalc_visible()
 
-    def set_total_bars(self, n: int) -> None:
-        self.total_bars = max(0, int(n))
+    def set_view(self, x: float, w: float) -> None:
+        """Actualiza el viewport horizontal del plot (llamado cada frame)"""
+        self.view_x = float(x)
+        self.view_w = max(1.0, float(w))
         self._recalc_visible()
 
     def get_visible_range(self) -> VisibleRange:
         return self._visible
 
     def _recalc_visible(self) -> None:
-        if self.total_bars <= 0:
-            self._visible = VisibleRange(0, -1)
+        if self.total_bars <= 0 or not self._timestamps:
+            self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
             return
 
         spacing = max(1.0, self.bar_spacing)
         bars_in_view = int(self.view_w / spacing) + 2
 
         last = self.total_bars - 1
-        end_index = int(round(last - self.right_offset))
-        end_index = max(0, min(last, end_index))
+        end_idx = int(round(last - self.right_offset))
+        end_idx = max(0, min(last, end_idx))
 
-        start_index = end_index - (bars_in_view - 1)
-        if start_index < 0:
-            start_index = 0
+        start_idx = max(0, end_idx - (bars_in_view - 1))
 
-        self._visible = VisibleRange(start_index, end_index)
+        start_ts = self._timestamps[start_idx]
+        end_ts = self._timestamps[end_idx]
+
+        self._visible = VisibleRange(start_ts, end_ts, start_idx, end_idx)
 
     def index_to_x(self, index: int) -> float:
         vr = self._visible
-        if vr.end < vr.start:
+        if vr.end_idx <= vr.start_idx:
             return self.view_x
 
-        dx_bars = index - vr.end
-        x_right = self.view_x + self.view_w
-        return float(x_right + dx_bars * self.bar_spacing)
+        t = (index - vr.start_idx) / (vr.end_idx - vr.start_idx)
+        t = max(0.0, min(1.0, t))
+        return self.view_x + t * self.view_w
 
-    def x_to_index(self, x: float) -> int:
-        if self.total_bars <= 0:
-            return 0
-
+    def time_to_x(self, ts: datetime) -> float:
         vr = self._visible
-        x_right = self.view_x + self.view_w
-        dx_px = float(x) - x_right
-        dx_bars = dx_px / max(1.0, self.bar_spacing)
+        if vr.end_ts <= vr.start_ts:
+            return self.view_x
 
-        idx = int(round(vr.end + dx_bars))
-        return max(0, min(self.total_bars - 1, idx))
+        delta_total = (vr.end_ts - vr.start_ts).total_seconds()
+        if delta_total <= 0:
+            return self.view_x
+
+        delta = (ts - vr.start_ts).total_seconds()
+        t = delta / delta_total
+        t = max(0.0, min(1.0, t))
+        return self.view_x + t * self.view_w
+
+    def x_to_time(self, x: float) -> datetime:
+        vr = self._visible
+        t = (x - self.view_x) / self.view_w
+        t = max(0.0, min(1.0, t))
+
+        delta_total = (vr.end_ts - vr.start_ts).total_seconds()
+        delta = t * delta_total
+        return vr.start_ts + timedelta(seconds=delta)
 
     def zoom_at_x(self, mouse_x: float, delta: float) -> None:
-        factor = 1.0 + (0.10 if delta > 0 else -0.10)
-        self.bar_spacing = float(max(3.0, min(40.0, self.bar_spacing * factor)))
+        factor = 1.0 + (0.12 if delta > 0 else -0.12)
+        old_spacing = self.bar_spacing
+        self.bar_spacing = max(3.0, min(60.0, self.bar_spacing * factor))
+        # Ajustar offset para que el zoom sea centrado en el mouse
+        if old_spacing != self.bar_spacing:
+            ratio = mouse_x / self.view_w if self.view_w > 0 else 0.5
+            self.right_offset += (self.total_bars * ratio) * (1 / factor - 1)
         self._recalc_visible()
 
     def pan_by_pixels(self, dx_px: float) -> None:
         bars = dx_px / max(1.0, self.bar_spacing)
         self.right_offset += bars
-        self.right_offset = float(max(-50.0, min(50000.0, self.right_offset)))
+        self.right_offset = max(-100.0, min(100000.0, self.right_offset))
         self._recalc_visible()
-
-    # dentro de charts/scales/time_scale.py (clase TimeScale)
-
-def set_viewport(self, x: float, y: float, w: float, h: float) -> None:
-    self.view_x = float(x)
-    self.view_y = float(y)
-    self.view_w = max(1.0, float(w))
-    self.view_h = max(1.0, float(h))
-
-def index_to_x(self, i: int) -> float:
-    """
-    Mapeo mínimo: cada bar ocupa (bar_px + gap_px) y se desplaza con scroll.
-    Usamos el "center index" y un offset px.
-    """
-    # Si ya tenés bar_spacing_px / scroll_px / center_index, enchufalos acá.
-    bar = getattr(self, "bar_width_px", 8.0)
-    gap = getattr(self, "bar_gap_px", 3.0)
-    step = float(bar + gap)
-
-    center = getattr(self, "center_index", 0)
-    pan = getattr(self, "pan_px", 0.0)
-
-    # x del centro del plot
-    x_mid = self.view_x + self.view_w * 0.5
-
-    return x_mid + (i - center) * step + float(pan)
-
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\series\__init__.py
 ================================================================================
@@ -1613,16 +1848,18 @@ from typing import List, Tuple, Optional
 from charts.scales.time_scale import TimeScale
 from charts.scales.price_scale import PriceScale
 from data.fake_ohlc import OHLC
-
+from render.renderer import Renderer2D, Color
+import math
 
 
 @dataclass
 class CandleStyle:
-    body_width_px: float = 8.0
-    wick_width_px: float = 1.0
-    gap_px: float = 3.0  # espacio entre velas
     up_color: Tuple[float, float, float, float] = (0.10, 0.80, 0.35, 1.0)
     down_color: Tuple[float, float, float, float] = (0.90, 0.25, 0.25, 1.0)
+    wick_width_px: float = 1.0
+    width_factor: float = 0.8  # Fracción del spacing para ancho (deja gap)
+    min_width_px: float = 4.0  # Ancho mínimo para evitar finura excesiva
+    min_gap_px: float = 1.0    # Gap mínimo para evitar overlapping
 
 
 class CandleSeries:
@@ -1637,27 +1874,25 @@ class CandleSeries:
         d = self.data[i]
         return d.h, d.l
 
-    def draw(self, r, time_scale: TimeScale, price_scale: PriceScale, visible_start: int, visible_end: int) -> None:
+    def draw(self, renderer: Renderer2D, time_scale: TimeScale, price_scale: PriceScale, visible_start: int, visible_end: int) -> None:
         """
-        r: Renderer2D (o adapter que tenga draw_rect_px / draw_line_px)
-        visible_start/end: índices visibles
+        Dibuja velas japonesas con ancho dinámico, gap mínimo y rounding para crispness.
+        Basado en best practices de TradingView/Highcharts: clamp min/max width, dynamic spacing.
         """
         st = self.style
 
-        # Para una primera versión, definimos el “step” (ancho + gap)
-        step = st.body_width_px + st.gap_px
-
-        # fallback si no hay nada visible
         if visible_end < visible_start:
             return
 
-        # Dibujo: candle por candle
+        # Número de velas visibles para optimizaciones futuras (ej: grouping si > threshold)
+        visible_count = visible_end - visible_start + 1
+
         for i in range(visible_start, visible_end + 1):
             if i < 0 or i >= len(self.data):
                 continue
 
             d = self.data[i]
-            x_center = time_scale.index_to_x(i)  # lo implementamos abajo si falta
+            x_center = time_scale.index_to_x(i)
 
             y_o = price_scale.price_to_y(d.o)
             y_c = price_scale.price_to_y(d.c)
@@ -1667,27 +1902,45 @@ class CandleSeries:
             is_up = d.c >= d.o
             color = st.up_color if is_up else st.down_color
 
-            # Wick (línea vertical)
-            r.draw_line_px(
+            # Ancho dinámico basado en spacing (novel: clamp para no overlapping)
+            bar_spacing = max(1.0, time_scale.bar_spacing)
+            bar_width_raw = bar_spacing * st.width_factor
+
+            # Clamp con mínimos (evita finura/overlapping)
+            bar_width = max(st.min_width_px, bar_width_raw)
+            gap = bar_spacing - bar_width
+            if gap < st.min_gap_px:
+                bar_width = bar_spacing - st.min_gap_px
+                bar_width = max(st.min_width_px, bar_width)
+
+            # Round para crispness (anti-aliasing natural en OpenGL)
+            bar_width = math.floor(bar_width)
+            x_center = math.floor(x_center) + 0.5  # Snap to pixel grid for sharp lines
+
+            left = x_center - bar_width / 2
+            right = x_center + bar_width / 2
+
+            # Wick (línea vertical, snap to center)
+            renderer.draw_line_px(
                 x_center, y_h,
                 x_center, y_l,
                 color=color,
                 width=st.wick_width_px,
             )
 
-            # Body (rect)
+            # Body (rect, con height min 1px para visibilidad)
             top = min(y_o, y_c)
             bot = max(y_o, y_c)
             h = max(1.0, bot - top)
 
-            x0 = x_center - st.body_width_px * 0.5
-
-            r.draw_rect_px(
-                x0, top,
-                st.body_width_px, h,
+            renderer.draw_rect_px(
+                left, top,
+                bar_width, h,
                 color=color
             )
 
+            # Opcional: Data grouping para zoom out extremo (novel: aggregate si visible_count > 1000)
+            # Si querés, podemos agregar después: merge OHLC en grupos si muchas velas visibles
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\data\__init__.py
 ================================================================================
@@ -1709,55 +1962,49 @@ class OhlcvAggregator:
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\data\fake_ohlc.py
 ================================================================================
-# charts/data/fake_ohlc.py
+# data/fake_ohlc.py
 from __future__ import annotations
 from dataclasses import dataclass
 import random
 from typing import List
+from datetime import datetime, timedelta
 
 
 @dataclass
 class OHLC:
+    ts: datetime  # Nuevo: timestamp UTC
     o: float
     h: float
     l: float
     c: float
 
 
-def make_fake_ohlc(n: int = 400, start: float = 100.0, volatility: float = 1.2, seed: int = 7) -> List[OHLC]:
-    """
-    Genera una caminata aleatoria simple para testear el motor:
-    - o/h/l/c coherentes
-    - variación suave + picos ocasionales
-    """
+def make_fake_ohlc(n: int = 400, start_price: float = 100.0, volatility: float = 1.2, seed: int = 7,
+                   start_time: datetime = datetime(2026, 1, 1, 0, 0), interval: timedelta = timedelta(minutes=1)) -> List[OHLC]:
     rnd = random.Random(seed)
     out: List[OHLC] = []
-    last = start
+    last = start_price
+    current_time = start_time
 
     for _ in range(n):
         o = last
-        # cambio base
         delta = rnd.uniform(-volatility, volatility)
         c = o + delta
-
-        # rango intrabar
         wick_up = abs(rnd.uniform(0.0, volatility * 0.9))
         wick_dn = abs(rnd.uniform(0.0, volatility * 0.9))
-
         h = max(o, c) + wick_up
         l = min(o, c) - wick_dn
 
-        # a veces un spike
         if rnd.random() < 0.04:
             h += rnd.uniform(0.5, volatility * 3.0)
         if rnd.random() < 0.04:
             l -= rnd.uniform(0.5, volatility * 3.0)
 
-        out.append(OHLC(o=o, h=h, l=l, c=c))
+        out.append(OHLC(ts=current_time, o=o, h=h, l=l, c=c))
         last = c
+        current_time += interval  # Avanza el tiempo
 
     return out
-
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\data\feeds\__init__.py
 ================================================================================
