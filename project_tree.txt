@@ -273,9 +273,9 @@ class GLFWWindow:
                 "gridline_color": (0.8, 0.8, 0.8, 0.50),
                 "gridline_width": 2,
                 "tick_in_axis": True,
-                "tick_length_px": 7,
-                "tick_width": 1,
-                "tick_color": (0.9, 0.9, 0.9, 1.0),  # más claro para que se vea bien
+                "tick_length_px": 10,
+                "tick_width": 2,
+                "tick_color": (0.7, 0.7, 0.7, 0.9),
                 "decimals": 2,
                 "target_ticks": 20,
             },
@@ -287,9 +287,9 @@ class GLFWWindow:
                 "font_color": (1, 1, 1, 1),
                 "padding_px": 6,
                 "tick_in_axis": True,
-                "tick_length_px": 7,
+                "tick_length_px": 10,
                 "tick_width": 1,
-                "tick_color": (0.9, 0.9, 0.9, 1.0),  # más claro
+                "tick_color": (0.7, 0.7, 0.7, 0.9),
                 "gridline_in_plot": True,
                 "gridline_color": (0.8, 0.8, 0.8, 0.50),
                 "target_ticks": 8,
@@ -300,7 +300,7 @@ class GLFWWindow:
         }
 
         # ----------------------------
-        # Overlay layout
+        # Overlay layout (¡PRIMERO!)
         # ----------------------------
         self.overlay = ChartOverlay(self.time_scale, self.price_scale, self.chart_config)
         self.overlay_renderer = _OverlayRendererAdapter(self.renderer)
@@ -326,7 +326,7 @@ class GLFWWindow:
         self.crosshair = CrosshairOverlay(
             overlay=self.overlay,
             input_state=self.input,
-            series=self.series,
+            series=self.series,  # ← AGREGADO AQUÍ
             style=CrosshairStyle(
                 color=(0.1, 0.1, 0.1, 0.55),
                 width=1.2
@@ -334,7 +334,7 @@ class GLFWWindow:
         )
 
         # ----------------------------
-        # Tooltip
+        # Tooltip (AHORA SÍ, después de crear overlay)
         # ----------------------------
         self.tooltip = TooltipOverlay(
             overlay=self.overlay,
@@ -467,16 +467,13 @@ class GLFWWindow:
 
             self.renderer.begin_frame(self.width, self.height)
 
-            
+            # Fondo general (opcional, pero si querés un overlay sutil)
+            # self.renderer.draw_rect_px(0, 0, float(self.width), float(self.height), Color(0.01, 0.01, 0.01, 0.5))
 
-            # 2. Ejes con ticks, labels y gridline_in_plot (encima de las bandas)
-            self.price_axis_overlay.draw(self.overlay_renderer)
-            self.time_axis_overlay.draw(self.overlay_renderer)
-
-            # 1. Bandas de fondo y separadores (primero)
+            # Overlay (grid + bandas de ejes)
             self.overlay.draw(self.overlay_renderer)
 
-            # 3. Velas + autoscale
+            # Velas + autoscale
             vr = self.time_scale.get_visible_range()
             vs = max(0, vr.start_idx)
             ve = min(self.total_bars - 1, vr.end_idx)
@@ -488,11 +485,15 @@ class GLFWWindow:
                 )
                 self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
 
-            # 4. Tooltip (después de velas, antes del crosshair)
+            # Tooltip (después de velas, antes del crosshair)
             self.tooltip.draw(self.renderer)
 
-            # 5. Crosshair encima de todo
+            # Crosshair encima de todo
             self.crosshair.draw(self.renderer)
+
+            # Ejes (ticks + labels con fechas)
+            self.price_axis_overlay.draw(self.overlay_renderer)
+            self.time_axis_overlay.draw(self.overlay_renderer)
 
             self.renderer.end_frame()
             glfw.swap_buffers(self._window)
@@ -679,6 +680,11 @@ class PriceAxisOverlay:
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
 
+        # Derivar tick_color de axis_band si no se especifica
+        if "tick_color" not in config and "axis_band" in overlay.config["colors"]:
+            band = overlay.config["colors"]["axis_band"]
+            self.style.tick_color = (band[0] + 0.5, band[1] + 0.5, band[2] + 0.5, band[3])  # aclarado
+
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
@@ -784,6 +790,11 @@ class TimeAxisOverlay:
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
 
+        # Derivar tick_color de axis_band si no se especifica
+        if "tick_color" not in config and "axis_band" in overlay.config["colors"]:
+            band = overlay.config["colors"]["axis_band"]
+            self.style.tick_color = (band[0] + 0.5, band[1] + 0.5, band[2] + 0.5, band[3])  # aclarado
+
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
@@ -858,6 +869,8 @@ class TimeAxisOverlay:
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\chart_overlay.py
 ================================================================================
 # charts/overlays/chart_overlay.py
+
+from utils.math import clamp as _clamp
 from dataclasses import dataclass
 from typing import Dict, Tuple, Any, Optional
 
@@ -895,6 +908,7 @@ class ChartOverlay:
     NO dibuja bandas de fondo (rectángulos negros) para los ejes.
     Los ticks, labels y gridline_in_plot los dibuja después el axis overlay.
     """
+
     DEFAULT_CONFIG = {
         "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
         "price_axis": {
@@ -909,9 +923,9 @@ class ChartOverlay:
             "separator_width": 1,
         },
         "colors": {
-            "axis_separator": (0.9, 0.9, 0.9, 1.0),  # gris tenue
+            "axis_separator": (0.4, 0.4, 0.4, 0.8),     # gris tenue
         },
-        "coords": {"y_down": True},
+        "coords": {"y_down": True},  # origen arriba (UI común) — cambiar a False si y crece hacia arriba
     }
 
     def __init__(self, time_scale, price_scale, config: Optional[Dict[str, Any]] = None):
@@ -935,9 +949,9 @@ class ChartOverlay:
         if self._layout is None:
             self._layout = self._compute_layout()
 
-            # Conectar escalas al área de plot
+            # Conectar escalas al área de plot (no al chart entero)
             px, py, pw, ph = self._layout.plot_rect
-            self.time_scale.set_view(px, pw)
+            self.time_scale.set_view(px, pw)  # asume que TimeScale tiene este método
             if hasattr(self.price_scale, "set_viewport"):
                 self.price_scale.set_viewport(px, py, pw, ph)
 
@@ -948,7 +962,7 @@ class ChartOverlay:
         return self.get_layout().plot_rect
 
     def draw(self, renderer) -> None:
-        """Dibuja SOLO los separadores (líneas grises)."""
+        """Dibuja solo los separadores (líneas grises)."""
         layout = self.get_layout()
 
         if self.config["price_axis"]["show"]:
@@ -967,6 +981,7 @@ class ChartOverlay:
 
         chart_rect: Rect = (self._x, self._y, self._w, self._h)
 
+        # Área después de padding
         inner_x = self._x + left
         inner_w = max(0.0, self._w - left - right)
 
@@ -996,16 +1011,14 @@ class ChartOverlay:
             (inner_x, time_y, inner_w, time_h) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
         )
 
-        # Price axis
+        # Price axis (derecha o izquierda)
         side = (pa["side"] or "right").lower()
         if side == "left":
             price_rect: Rect = (inner_x, plot_y, price_w, plot_h)
             plot_rect: Rect = (inner_x + price_w, plot_y, max(0.0, inner_w - price_w), plot_h)
         else:
             plot_rect: Rect = (inner_x, plot_y, max(0.0, inner_w - price_w), plot_h)
-            price_rect: Rect = (
-                (inner_x + plot_rect[2], plot_y, price_w, plot_h) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
-            )
+            price_rect: Rect = (inner_x + plot_rect[2], plot_y, price_w, plot_h) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
 
         return OverlayLayout(
             chart_rect=chart_rect,
@@ -1387,24 +1400,13 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\ch
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\scales\price_scale.py
 ================================================================================
-"""
-PriceScale
-
-Objetivo (mínimo sólido):
-- Mapear price <-> y(px) dentro del viewport del PLOT (no del chart completo).
-- Auto-scale basado SOLO en barras visibles (cuando le pases un proveedor de high/low).
-- Generación de ticks "nice" (redondeados) para el eje.
-
-Notas importantes para tu engine:
-- Tu renderer/shader está en coordenadas de app y usa y-down (origen arriba).
-- PriceScale soporta y_down configurable para que el mapping sea consistente.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
 from typing import Callable, Iterable, List, Optional, Sequence, Tuple
 
+from utils.math import clamp as _clamp  # ← AGREGADO AQUÍ PARA ARREGLAR EL ERROR
 
 @dataclass
 class PriceRange:
@@ -1412,18 +1414,11 @@ class PriceRange:
     high: float
 
 
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return lo if v < lo else hi if v > hi else v
-
-
 def _is_finite(x: float) -> bool:
     return math.isfinite(x)
 
 
 def _nice_step(raw_step: float) -> float:
-    """
-    Devuelve un step "bonito" (1, 2, 5 * 10^k) cercano al raw_step.
-    """
     if raw_step <= 0 or not _is_finite(raw_step):
         return 1.0
     exp = math.floor(math.log10(raw_step))
@@ -1442,9 +1437,6 @@ def _nice_step(raw_step: float) -> float:
 
 
 def _nice_bounds(lo: float, hi: float, step: float) -> Tuple[float, float]:
-    """
-    Expande límites a múltiplos del step.
-    """
     if step <= 0:
         return lo, hi
     lo2 = math.floor(lo / step) * step
@@ -1453,21 +1445,6 @@ def _nice_bounds(lo: float, hi: float, step: float) -> Tuple[float, float]:
 
 
 class PriceScale:
-    """
-    Maneja el mapeo vertical:
-
-        price_to_y(price) -> y px
-        y_to_price(y) -> price
-
-    y_down = True:
-        y = y0 (arriba) para high
-        y = y0 + h (abajo) para low
-
-    y_down = False (si algún día lo usás):
-        y = y0 (abajo) para low
-        y = y0 + h (arriba) para high
-    """
-
     def __init__(
         self,
         *,

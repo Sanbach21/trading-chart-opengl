@@ -102,45 +102,68 @@ class GLFWWindow:
         self.renderer = Renderer2D()
 
         # ----------------------------
-        # Chart config (layout + style)
+        # Chart config (layout + style) - Ninja-like base
         # ----------------------------
         self.chart_config = {
+            "colors": {
+                "bg": (0.12, 0.12, 0.12, 1.0),
+                "axis_band": (0.08, 0.08, 0.08, 1.0),
+                "axis_separator": (0.35, 0.35, 0.35, 0.85),
+            },
             "price_axis": {
                 "side": "right",
-                "width_px": 100,
                 "show": True,
-                "font_size_px": 10,
-                "font_thickness_px": 2,
-                "font_color": (1, 1, 1, 1),
-                "padding_px": 10,
-                "gridline_in_plot": True,
-                "gridline_color": (0.8, 0.8, 0.8, 0.50),
-                "gridline_width": 2,
-                "tick_in_axis": True,
-                "tick_length_px": 10,
-                "tick_width": 2,
-                "tick_color": (0.7, 0.7, 0.7, 0.9),
+                "width_px": 60,              # más angosto (probá 60/55)
+
+                # fuente
+                "font_size_px": 8,
+                "font_thickness_px": 1,
+                "font_color": (0.78, 0.78, 0.78, 1.0),
+                "padding_px": 3,             # precios más pegados al borde
+
+                # densidad (ticks más juntos)
+                "target_major_ticks": 12,    # <-- ESTO es lo que cuenta (probá 10-16)
+                "minor_divisions": 3,
+
+                # grid Ninja-like
+                "grid_major_color": (0.25, 0.25, 0.25, 0.35),
+                "grid_minor_color": (0.25, 0.25, 0.25, 0.15),
+                "grid_major_width": 1.0,
+                "grid_minor_width": 1.0,
+
+                # ticks en el eje
+                "tick_major_len": 7,
+                "tick_minor_len": 4,
+                "tick_width": 1.0,
+                "tick_color": (0.60, 0.60, 0.60, 0.9),
+
                 "decimals": 2,
-                "target_ticks": 20,
             },
+
             "time_axis": {
-                "height_px": 34,
+                "height_px": 28,                # compacto
                 "show": True,
-                "font_size_px": 10,
+
+                "font_size_px": 13,
                 "font_thickness_px": 2,
-                "font_color": (1, 1, 1, 1),
+                "font_color": (0.78, 0.78, 0.78, 1.0),
                 "padding_px": 6,
+
+                "min_label_spacing_px": 100.0,  # 90 -> 120 (menos labels, más limpio)
+                "format_compact": True,
+
                 "tick_in_axis": True,
-                "tick_length_px": 10,
+                "tick_length_px": 6,
                 "tick_width": 1,
-                "tick_color": (0.7, 0.7, 0.7, 0.9),
+                "tick_color": (0.60, 0.60, 0.60, 0.9),
+
                 "gridline_in_plot": True,
-                "gridline_color": (0.8, 0.8, 0.8, 0.50),
-                "target_ticks": 8,
+                "gridline_color": (0.25, 0.25, 0.25, 0.25),
+                "target_ticks": 5,
             },
-            "grid": {"show": True, "vx": 80, "hy": 60, "line_width": 1},
             "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
             "coords": {"y_down": True},
+            "draw": {"axis_bands": True},
         }
 
         # ----------------------------
@@ -170,15 +193,15 @@ class GLFWWindow:
         self.crosshair = CrosshairOverlay(
             overlay=self.overlay,
             input_state=self.input,
-            series=self.series,  # ← AGREGADO AQUÍ
+            series=self.series,
             style=CrosshairStyle(
-                color=(0.1, 0.1, 0.1, 0.55),
+                color=(0.10, 0.10, 0.10, 0.55),
                 width=1.2
             )
         )
 
         # ----------------------------
-        # Tooltip (AHORA SÍ, después de crear overlay)
+        # Tooltip
         # ----------------------------
         self.tooltip = TooltipOverlay(
             overlay=self.overlay,
@@ -306,18 +329,20 @@ class GLFWWindow:
                 glfw.set_window_should_close(self._window, True)
 
             # ---------------- Render ----------------
-            glClearColor(0.0, 0.0, 0.0, 1.0)  # Fondo negro puro
+            bg = self.chart_config["colors"]["bg"]
+            glClearColor(float(bg[0]), float(bg[1]), float(bg[2]), float(bg[3]))
             glClear(GL_COLOR_BUFFER_BIT)
 
             self.renderer.begin_frame(self.width, self.height)
 
-            # Fondo general (opcional, pero si querés un overlay sutil)
-            # self.renderer.draw_rect_px(0, 0, float(self.width), float(self.height), Color(0.01, 0.01, 0.01, 0.5))
-
-            # Overlay (grid + bandas de ejes)
+            # 1) Overlay layout: bandas + separadores
             self.overlay.draw(self.overlay_renderer)
 
-            # Velas + autoscale
+            # 2) Ejes PRIMERO: gridlines/ticks/labels (para que el grid quede atrás)
+            self.price_axis_overlay.draw(self.overlay_renderer)
+            self.time_axis_overlay.draw(self.overlay_renderer)
+
+            # 3) Velas + autoscale (encima del grid)
             vr = self.time_scale.get_visible_range()
             vs = max(0, vr.start_idx)
             ve = min(self.total_bars - 1, vr.end_idx)
@@ -329,15 +354,11 @@ class GLFWWindow:
                 )
                 self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
 
-            # Tooltip (después de velas, antes del crosshair)
+            # 4) Tooltip
             self.tooltip.draw(self.renderer)
 
-            # Crosshair encima de todo
+            # 5) Crosshair encima de todo
             self.crosshair.draw(self.renderer)
-
-            # Ejes (ticks + labels con fechas)
-            self.price_axis_overlay.draw(self.overlay_renderer)
-            self.time_axis_overlay.draw(self.overlay_renderer)
 
             self.renderer.end_frame()
             glfw.swap_buffers(self._window)

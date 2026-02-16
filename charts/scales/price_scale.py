@@ -1,10 +1,12 @@
+# charts/scales/price_scale.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Callable, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple, Dict
 
-from utils.math import clamp as _clamp  # ← AGREGADO AQUÍ PARA ARREGLAR EL ERROR
+from utils.math import clamp as _clamp
+
 
 @dataclass
 class PriceRange:
@@ -17,6 +19,7 @@ def _is_finite(x: float) -> bool:
 
 
 def _nice_step(raw_step: float) -> float:
+    """Redondea a 1,2,5,10 * 10^exp."""
     if raw_step <= 0 or not _is_finite(raw_step):
         return 1.0
     exp = math.floor(math.log10(raw_step))
@@ -57,24 +60,12 @@ class PriceScale:
         self.view_w: float = 1.0
         self.view_h: float = 1.0
 
-        # Guardamos también para y_to_price
-        self.plot_x: float = 0.0
-        self.plot_y: float = 0.0
-        self.plot_w: float = 1.0
-        self.plot_h: float = 1.0
-
-        # Coordinate system
         self.y_down: bool = bool(y_down)
-
-        # Visual padding inside plot
         self.top_padding_px: float = float(top_padding_px)
         self.bottom_padding_px: float = float(bottom_padding_px)
 
-        # Range
         self._range: PriceRange = PriceRange(0.0, 1.0)
         self._manual_range: Optional[PriceRange] = None
-
-        # Safety
         self._min_range = float(min_range)
 
     # -------------------------
@@ -85,12 +76,6 @@ class PriceScale:
         self.view_y = float(y)
         self.view_w = max(1.0, float(w))
         self.view_h = max(1.0, float(h))
-
-        # Guardamos para y_to_price
-        self.plot_x = self.view_x
-        self.plot_y = self.view_y
-        self.plot_w = self.view_w
-        self.plot_h = self.view_h
 
     def set_coord_system(self, *, y_down: bool) -> None:
         self.y_down = bool(y_down)
@@ -105,9 +90,6 @@ class PriceScale:
     # Range control
     # -------------------------
     def set_manual_range(self, low: float, high: float) -> None:
-        """
-        “Bloquea” el rango (para cuando implementemos drag del eje de precios).
-        """
         lo = float(low)
         hi = float(high)
         if not (_is_finite(lo) and _is_finite(hi)):
@@ -123,9 +105,6 @@ class PriceScale:
         self._manual_range = None
 
     def set_range(self, low: float, high: float) -> None:
-        """
-        Setea el rango efectivo SOLO si no hay manual_range activo.
-        """
         if self._manual_range is not None:
             return
 
@@ -158,12 +137,6 @@ class PriceScale:
         *,
         pad_ratio: float = 0.02,
     ) -> None:
-        """
-        Calcula min/max SOLO en [visible_start..visible_end] usando un provider:
-            get_high_low(i) -> (high, low)
-
-        pad_ratio agrega un margen porcentual arriba/abajo.
-        """
         if self._manual_range is not None:
             return
         if visible_end < visible_start:
@@ -174,7 +147,8 @@ class PriceScale:
 
         for i in range(int(visible_start), int(visible_end) + 1):
             h, l = get_high_low(i)
-            h = float(h); l = float(l)
+            h = float(h)
+            l = float(l)
             if not (_is_finite(h) and _is_finite(l)):
                 continue
             if l < lo:
@@ -190,7 +164,6 @@ class PriceScale:
 
         rng = max(self._min_range, hi - lo)
         pad = rng * float(max(0.0, pad_ratio))
-
         self.set_range(lo - pad, hi + pad)
 
     def autoscale_from_hilo_arrays(
@@ -202,9 +175,6 @@ class PriceScale:
         *,
         pad_ratio: float = 0.02,
     ) -> None:
-        """
-        Variante rápida si ya tenés arrays highs/lows.
-        """
         n = min(len(highs), len(lows))
         if n <= 0:
             return
@@ -221,34 +191,22 @@ class PriceScale:
     # Mapping
     # -------------------------
     def price_to_y(self, price: float) -> float:
-        """
-        Mapea precio -> y en pixeles DENTRO del plot.
-        """
         p = float(price)
         lo, hi = self._range.low, self._range.high
-
-        # Evitar división por cero
         rng = max(self._min_range, hi - lo)
 
-        # Área usable (respetando padding)
         y0 = self.view_y + self.top_padding_px
         y1 = (self.view_y + self.view_h) - self.bottom_padding_px
         usable_h = max(1.0, y1 - y0)
 
         t = (p - lo) / rng  # 0..1
 
-        # y_down: high arriba (t=1 => y=y0)
         if self.y_down:
-            # low (t=0) abajo => y1
             return float(y1 - t * usable_h)
         else:
-            # y_up: low abajo (y0), high arriba (y1) en coords y-up
             return float(y0 + t * usable_h)
 
     def y_to_price(self, y: float) -> float:
-        """
-        Mapea y(px) -> precio.
-        """
         lo, hi = self._range.low, self._range.high
         rng = max(self._min_range, hi - lo)
 
@@ -258,7 +216,6 @@ class PriceScale:
 
         yy = float(y)
         if self.y_down:
-            # y=y1 => t=0 ; y=y0 => t=1
             t = (y1 - yy) / usable_h
         else:
             t = (yy - y0) / usable_h
@@ -267,36 +224,63 @@ class PriceScale:
         return float(lo + t * rng)
 
     # -------------------------
-    # Ticks
+    # Ticks (Majors)
     # -------------------------
     def get_ticks(self, target_count: int = 8) -> List[Tuple[float, float]]:
         """
-        Devuelve lista de ticks como (price, y_px).
-        OJO: todavía no renderizamos texto, pero esto ya sirve para líneas/ticks.
+        Backward compatible: solo major ticks como (price, y).
+        """
+        out = self.get_ticks_ex(target_major=target_count, minor_divisions=1)
+        return out["major"]
+
+    # -------------------------
+    # Ticks (Majors + Minors)  <-- Ninja-like
+    # -------------------------
+    def get_ticks_ex(self, target_major: int = 8, minor_divisions: int = 4) -> Dict[str, List[Tuple[float, float]]]:
+        """
+        Devuelve:
+          {
+            "major": [(price, y), ...],
+            "minor": [(price, y), ...]   # sin incluir majors
+          }
+
+        minor_divisions=4 => entre un major y el siguiente hay 3 minors.
         """
         lo, hi = self._range.low, self._range.high
         rng = max(self._min_range, hi - lo)
 
-        n = max(2, int(target_count))
+        n = max(2, int(target_major))
         raw_step = rng / (n - 1)
-        step = _nice_step(raw_step)
+        major_step = _nice_step(raw_step)
 
-        lo2, hi2 = _nice_bounds(lo, hi, step)
+        lo2, hi2 = _nice_bounds(lo, hi, major_step)
 
-        ticks: List[Tuple[float, float]] = []
-        # Evitar loops infinitos si step raro
-        if step <= 0 or not _is_finite(step):
-            return ticks
+        majors: List[Tuple[float, float]] = []
+        minors: List[Tuple[float, float]] = []
 
-        # Arrancar en el primer múltiplo >= lo2
+        if major_step <= 0 or not _is_finite(major_step):
+            return {"major": majors, "minor": minors}
+
+        div = max(1, int(minor_divisions))
+        minor_step = major_step / div
+
+        # iteramos en majors
         v = lo2
-        # límite duro por seguridad
-        max_iter = 512
+        max_iter = 1024
         it = 0
         while v <= hi2 + 1e-12 and it < max_iter:
             y = self.price_to_y(v)
-            ticks.append((float(v), float(y)))
-            v += step
+            majors.append((float(v), float(y)))
+
+            # minors dentro del bloque (v + minor_step ... v + (div-1)*minor_step)
+            if div > 1:
+                for k in range(1, div):
+                    mv = v + k * minor_step
+                    if mv <= hi2 + 1e-12:
+                        my = self.price_to_y(mv)
+                        minors.append((float(mv), float(my)))
+
+            v += major_step
             it += 1
 
-        return ticks
+        return {"major": majors, "minor": minors}
