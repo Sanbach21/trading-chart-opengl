@@ -10,8 +10,11 @@ Esta clase es el 'Core App' inicial:
 from __future__ import annotations
 
 import time
-import glfw
+import json
+from pathlib import Path
+from typing import Dict
 
+import glfw
 from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     glClear,
@@ -25,6 +28,7 @@ from OpenGL.GL import (
 
 from app.input import InputState
 from render.renderer import Renderer2D, Color
+from render.texture import load_texture_rgba
 
 from charts.scales.time_scale import TimeScale
 from charts.scales.price_scale import PriceScale
@@ -35,6 +39,9 @@ from charts.overlays.tooltip import TooltipOverlay
 
 from data.fake_ohlc import make_fake_ohlc
 from charts.series.candles import CandleSeries
+
+# Text / MSDF
+from render.text.msdf_text import MsdfFontManager, MsdfFont, MsdfGlyph, MsdfFontMetrics
 
 
 # -------------------------------------------------
@@ -69,6 +76,24 @@ class _OverlayRendererAdapter:
                 float(x1), float(y1), float(x2), float(y2),
                 self._to_color(color),
             )
+
+    # --- MSDF pass-through (para MsdfFont.draw_text) ---
+    def begin_msdf_text(self, texture_id: int, edge: float, smoothing: float, color=None, **_):
+        self._r.begin_msdf_text(
+            texture_id=int(texture_id),
+            edge=float(edge),
+            smoothing=float(smoothing),
+            color=self._to_color(color),
+        )
+
+    def draw_textured_quad_px(self, x, y, w, h, u0, v0, u1, v1, **_):
+        self._r.draw_textured_quad_px(
+            float(x), float(y), float(w), float(h),
+            u0=float(u0), v0=float(v0), u1=float(u1), v1=float(v1)
+        )
+
+    def end_msdf_text(self, **_):
+        self._r.end_msdf_text()
 
 
 class GLFWWindow:
@@ -107,31 +132,31 @@ class GLFWWindow:
         self.chart_config = {
             "colors": {
                 "bg": (0.12, 0.12, 0.12, 1.0),
-                "axis_band": (0.08, 0.08, 0.08, 1.0),
+                "axis_band": (0.12, 0.12, 0.12, 1.0),
                 "axis_separator": (0.35, 0.35, 0.35, 0.85),
             },
             "price_axis": {
                 "side": "right",
                 "show": True,
-                "width_px": 60,              # más angosto (probá 60/55)
+                "width_px": 60,
 
-                # fuente
-                "font_size_px": 8,
-                "font_thickness_px": 1,
+                "font_size_px": 16,
                 "font_color": (0.78, 0.78, 0.78, 1.0),
-                "padding_px": 3,             # precios más pegados al borde
+                "padding_px": 3,
 
-                # densidad (ticks más juntos)
-                "target_major_ticks": 12,    # <-- ESTO es lo que cuenta (probá 10-16)
+                # MSDF tuning (opcionales)
+                "edge": 0.5,
+                "smoothing": 0.08,
+                "letter_spacing_px": 1.0,
+
+                "target_major_ticks": 12,
                 "minor_divisions": 3,
 
-                # grid Ninja-like
                 "grid_major_color": (0.25, 0.25, 0.25, 0.35),
                 "grid_minor_color": (0.25, 0.25, 0.25, 0.15),
                 "grid_major_width": 1.0,
                 "grid_minor_width": 1.0,
 
-                # ticks en el eje
                 "tick_major_len": 7,
                 "tick_minor_len": 4,
                 "tick_width": 1.0,
@@ -139,17 +164,20 @@ class GLFWWindow:
 
                 "decimals": 2,
             },
-
             "time_axis": {
-                "height_px": 28,                # compacto
+                "height_px": 28,
                 "show": True,
 
-                "font_size_px": 13,
-                "font_thickness_px": 2,
+                "font_size_px": 14,
                 "font_color": (0.78, 0.78, 0.78, 1.0),
                 "padding_px": 6,
 
-                "min_label_spacing_px": 100.0,  # 90 -> 120 (menos labels, más limpio)
+                # MSDF tuning (opcionales)
+                "edge": 0.5,
+                "smoothing": 0.08,
+                "letter_spacing_px": 1.0,
+
+                "min_label_spacing_px": 100.0,
                 "format_compact": True,
 
                 "tick_in_axis": True,
@@ -210,6 +238,90 @@ class GLFWWindow:
             series=self.series,
             max_distance_px=20.0
         )
+
+        # ----------------------------
+        # MSDF Font Manager
+        # ----------------------------
+        self.msdf_fonts = MsdfFontManager()
+
+    # -------------------------------------------------
+    # MSDF init (después de renderer.init())
+    # -------------------------------------------------
+    def _init_msdf_fonts(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+
+        png_path = root / "render" / "text" / "fonts" / "segoeui" / "trading_atlas.png"
+        json_path = root / "render" / "text" / "fonts" / "segoeui" / "trading_atlas.json"
+
+        if not png_path.exists():
+            raise FileNotFoundError(f"No existe: {png_path}")
+        if not json_path.exists():
+            raise FileNotFoundError(f"No existe: {json_path}")
+
+        # PNG -> texture_id
+        tex = load_texture_rgba(png_path)
+        texture_id = int(tex.id)
+
+        # JSON -> glyphs + metrics
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        metrics_obj = data.get("metrics", {})
+        ascent = float(metrics_obj.get("ascent", 0.0))
+        descent = float(metrics_obj.get("descent", 0.0))
+        line_height = float(metrics_obj.get("lineHeight", (ascent - descent) if (ascent or descent) else 1.0))
+        metrics = MsdfFontMetrics(line_height=line_height, ascent=ascent, descent=descent)
+
+        base_size_px = float(data.get("size", 48))
+
+        atlas_obj = data.get("atlas", {})
+        atlas_w = float(atlas_obj.get("width", 1.0))
+        atlas_h = float(atlas_obj.get("height", 1.0))
+        if atlas_w <= 0 or atlas_h <= 0:
+            atlas_w, atlas_h = 1.0, 1.0
+
+        glyphs: Dict[int, MsdfGlyph] = {}
+
+        for g in data.get("glyphs", []):
+            cp = g.get("unicode")
+            if cp is None:
+                continue
+            cp = int(cp)
+
+            ab = g.get("atlasBounds") or {}
+            pb = g.get("planeBounds") or {}
+
+            left = float(ab.get("left", 0.0))
+            bottom = float(ab.get("bottom", 0.0))
+            right = float(ab.get("right", 0.0))
+            top = float(ab.get("top", 0.0))
+
+            u0 = left / atlas_w
+            v0 = bottom / atlas_h
+            u1 = right / atlas_w
+            v1 = top / atlas_h
+
+            w = max(0.0, right - left)
+            h = max(0.0, top - bottom)
+
+            pl = float(pb.get("left", 0.0))
+            pt = float(pb.get("top", 0.0))
+
+            xoff = pl
+            yoff = -pt
+            xadv = float(g.get("advance", w))
+
+            glyphs[cp] = MsdfGlyph(
+                u0=u0, v0=v0, u1=u1, v1=v1,
+                w=w, h=h,
+                xoff=xoff, yoff=yoff,
+                xadv=xadv
+            )
+
+        font = MsdfFont(texture_id, glyphs, metrics, base_size_px=base_size_px)
+        self.msdf_fonts.register("segoeui", font)
+
+        print(f"[MSDF] cargado segoeui: {len(glyphs)} glyphs | tex={texture_id} | base={base_size_px}px")
 
     # -------------------------------------------------
     # GLFW callbacks
@@ -294,6 +406,13 @@ class GLFWWindow:
         assert self._window is not None
 
         self.renderer.init()
+        self._init_msdf_fonts()
+        font = self.msdf_fonts.get("segoeui")
+
+        self.price_axis_overlay.font = font
+        self.time_axis_overlay.font = font
+        self.tooltip.font = font
+        self.crosshair.font = font
 
         last = time.perf_counter()
         while not glfw.window_should_close(self._window):
@@ -304,19 +423,15 @@ class GLFWWindow:
             self.input.begin_frame()
             glfw.poll_events()
 
-            # Actualizar layout del chart
             self.overlay.set_view(0.0, 0.0, float(self.width), float(self.height))
             plot_x, plot_y, plot_w, plot_h = self.overlay.get_plot_rect()
 
-            # Actualizar escalas
             self.time_scale.set_view(plot_x, plot_w)
             self.price_scale.set_viewport(plot_x, plot_y, plot_w, plot_h)
 
-            # Zoom con rueda
             if self.input.mouse.scroll_y != 0.0:
                 self.time_scale.zoom_at_x(self.input.mouse.x, self.input.mouse.scroll_y)
 
-            # Pan con drag
             if self.input.mouse.left and not self._dragging:
                 self._dragging = True
             if not self.input.mouse.left:
@@ -324,40 +439,29 @@ class GLFWWindow:
             if self._dragging and self.input.mouse.dx != 0.0:
                 self.time_scale.pan_by_pixels(self.input.mouse.dx)
 
-            # Cerrar con Q
             if self.input.is_key_down(glfw.KEY_Q):
                 glfw.set_window_should_close(self._window, True)
 
-            # ---------------- Render ----------------
             bg = self.chart_config["colors"]["bg"]
             glClearColor(float(bg[0]), float(bg[1]), float(bg[2]), float(bg[3]))
             glClear(GL_COLOR_BUFFER_BIT)
 
             self.renderer.begin_frame(self.width, self.height)
 
-            # 1) Overlay layout: bandas + separadores
             self.overlay.draw(self.overlay_renderer)
 
-            # 2) Ejes PRIMERO: gridlines/ticks/labels (para que el grid quede atrás)
             self.price_axis_overlay.draw(self.overlay_renderer)
             self.time_axis_overlay.draw(self.overlay_renderer)
 
-            # 3) Velas + autoscale (encima del grid)
             vr = self.time_scale.get_visible_range()
             vs = max(0, vr.start_idx)
             ve = min(self.total_bars - 1, vr.end_idx)
 
             if ve >= vs:
-                self.price_scale.autoscale_from_provider(
-                    vs, ve,
-                    lambda i: self.series.get_high_low(i)
-                )
+                self.price_scale.autoscale_from_provider(vs, ve, lambda i: self.series.get_high_low(i))
                 self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
 
-            # 4) Tooltip
             self.tooltip.draw(self.renderer)
-
-            # 5) Crosshair encima de todo
             self.crosshair.draw(self.renderer)
 
             self.renderer.end_frame()
