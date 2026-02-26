@@ -12,7 +12,7 @@ from render.text.msdf_text import MsdfTextStyle
 
 @dataclass
 class CrosshairStyle:
-    color: Tuple[float, float, float, float] = (0.9, 0.9, 0.9, 0.6)
+    color: Tuple[float, float, float, float] = (0.9, 0.9, 0.9, 0.9)
     width: float = 1.0
     snap_to_bar: bool = False
 

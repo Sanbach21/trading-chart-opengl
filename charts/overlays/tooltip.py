@@ -31,7 +31,7 @@ class TooltipOverlay:
         self.font = None  # se asigna desde window.run()
 
         self.style = MsdfTextStyle(
-            size_px=13.0,
+            size_px=16.0,
             color=(0.95, 0.95, 1.0, 1.0),
             letter_spacing_px=1.5,
             edge=0.5,

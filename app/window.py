@@ -19,8 +19,8 @@ from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     glClear,
     glClearColor,
-    glViewport,
     glGetString,
+    glViewport,
     GL_VERSION,
     GL_RENDERER,
     GL_VENDOR,
@@ -42,6 +42,13 @@ from charts.series.candles import CandleSeries
 
 # Text / MSDF
 from render.text.msdf_text import MsdfFontManager, MsdfFont, MsdfGlyph, MsdfFontMetrics
+
+# Text / Bitmap (FreeType)
+from render.text.bitmap_font import BitmapFont
+
+# Text / Vector Bezier (shader)
+from render.vector_bezier_text import VectorBezierTextRenderer, VectorTextStyle
+from render.text.vector_bezier_font import VectorBezierFont
 
 
 # -------------------------------------------------
@@ -139,52 +146,39 @@ class GLFWWindow:
                 "side": "right",
                 "show": True,
                 "width_px": 60,
-
                 "font_size_px": 16,
                 "font_color": (0.78, 0.78, 0.78, 1.0),
                 "padding_px": 3,
-
-                # MSDF tuning (opcionales)
-                "edge": 0.5,
+                "edge": 0.8,
                 "smoothing": 0.08,
                 "letter_spacing_px": 1.0,
-
                 "target_major_ticks": 12,
                 "minor_divisions": 3,
-
                 "grid_major_color": (0.25, 0.25, 0.25, 0.35),
                 "grid_minor_color": (0.25, 0.25, 0.25, 0.15),
                 "grid_major_width": 1.0,
                 "grid_minor_width": 1.0,
-
                 "tick_major_len": 7,
                 "tick_minor_len": 4,
                 "tick_width": 1.0,
                 "tick_color": (0.60, 0.60, 0.60, 0.9),
-
                 "decimals": 2,
             },
             "time_axis": {
                 "height_px": 28,
                 "show": True,
-
                 "font_size_px": 14,
                 "font_color": (0.78, 0.78, 0.78, 1.0),
                 "padding_px": 6,
-
-                # MSDF tuning (opcionales)
                 "edge": 0.5,
                 "smoothing": 0.08,
                 "letter_spacing_px": 1.0,
-
                 "min_label_spacing_px": 100.0,
                 "format_compact": True,
-
                 "tick_in_axis": True,
                 "tick_length_px": 6,
                 "tick_width": 1,
                 "tick_color": (0.60, 0.60, 0.60, 0.9),
-
                 "gridline_in_plot": True,
                 "gridline_color": (0.25, 0.25, 0.25, 0.25),
                 "target_ticks": 5,
@@ -223,8 +217,8 @@ class GLFWWindow:
             input_state=self.input,
             series=self.series,
             style=CrosshairStyle(
-                color=(0.10, 0.10, 0.10, 0.55),
-                width=1.2
+                color=(0.9, 0.9, 0.9, 0.9),
+                width=1.0
             )
         )
 
@@ -244,6 +238,17 @@ class GLFWWindow:
         # ----------------------------
         self.msdf_fonts = MsdfFontManager()
 
+        # Fonts
+        self.bitmap_font: BitmapFont | None = None
+        self.vec_text: VectorBezierTextRenderer | None = None
+        self.vec_style: VectorTextStyle | None = None
+
+        self._vfont: VectorBezierFont | None = None
+        self._glyph_A = None
+
+        # Debug
+        self._debug_outline_points = True
+
     # -------------------------------------------------
     # MSDF init (después de renderer.init())
     # -------------------------------------------------
@@ -258,11 +263,9 @@ class GLFWWindow:
         if not json_path.exists():
             raise FileNotFoundError(f"No existe: {json_path}")
 
-        # PNG -> texture_id
         tex = load_texture_rgba(png_path)
         texture_id = int(tex.id)
 
-        # JSON -> glyphs + metrics
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
@@ -281,7 +284,6 @@ class GLFWWindow:
             atlas_w, atlas_h = 1.0, 1.0
 
         glyphs: Dict[int, MsdfGlyph] = {}
-
         for g in data.get("glyphs", []):
             cp = g.get("unicode")
             if cp is None:
@@ -336,7 +338,6 @@ class GLFWWindow:
             self.input.set_key(key, True)
         elif action == glfw.RELEASE:
             self.input.set_key(key, False)
-
         if key == glfw.KEY_ESCAPE and action == glfw.PRESS:
             glfw.set_window_should_close(window, True)
 
@@ -388,15 +389,12 @@ class GLFWWindow:
         fb_w, fb_h = glfw.get_framebuffer_size(self._window)
         self._on_framebuffer_size(self._window, fb_w, fb_h)
 
-        try:
-            version = glGetString(GL_VERSION)
-            vendor = glGetString(GL_VENDOR)
-            renderer = glGetString(GL_RENDERER)
-            print("OpenGL:", version.decode() if version else "Unknown")
-            print("Vendor:", vendor.decode() if vendor else "Unknown")
-            print("Renderer:", renderer.decode() if renderer else "Unknown")
-        except Exception:
-            print("No se pudo obtener info de OpenGL")
+        version = glGetString(GL_VERSION)
+        vendor = glGetString(GL_VENDOR)
+        renderer = glGetString(GL_RENDERER)
+        print("OpenGL:", version.decode() if version else "Unknown")
+        print("Vendor:", vendor.decode() if vendor else "Unknown")
+        print("Renderer:", renderer.decode() if renderer else "Unknown")
 
     # -------------------------------------------------
     # Main loop
@@ -405,14 +403,36 @@ class GLFWWindow:
         self._init_glfw()
         assert self._window is not None
 
+        # Init renderer (ya con contexto)
         self.renderer.init()
-        self._init_msdf_fonts()
-        font = self.msdf_fonts.get("segoeui")
 
-        self.price_axis_overlay.font = font
-        self.time_axis_overlay.font = font
-        self.tooltip.font = font
-        self.crosshair.font = font
+        # Vector renderer (shader)
+        self.vec_text = VectorBezierTextRenderer()
+        self.vec_style = VectorTextStyle(
+            size_px=7.0,
+            aa_px=1.2,
+            letter_spacing_px=2.0,
+            color=(0.95, 0.95, 1.0, 1.0),
+        )
+
+        # Init MSDF fonts
+        self._init_msdf_fonts()
+        msdf_font = self.msdf_fonts.get("segoeui")
+
+        # Init Bitmap font (tooltip)
+        root = Path(__file__).resolve().parents[1]
+        ttf_path = root / "times.ttf"
+        self.bitmap_font = BitmapFont(str(ttf_path), pixel_size=12, face_index=0)
+
+        # Assign fonts
+        self.price_axis_overlay.font = msdf_font
+        self.time_axis_overlay.font = msdf_font
+        self.crosshair.font = msdf_font
+        self.tooltip.font = self.bitmap_font
+
+        # Init VectorBezierFont + glyph UNA SOLA VEZ
+        self._vfont = VectorBezierFont(str(ttf_path), 128)
+        self._glyph_A = self._vfont.load_glyph("A")
 
         last = time.perf_counter()
         while not glfw.window_should_close(self._window):
@@ -423,15 +443,18 @@ class GLFWWindow:
             self.input.begin_frame()
             glfw.poll_events()
 
+            # Layout
             self.overlay.set_view(0.0, 0.0, float(self.width), float(self.height))
             plot_x, plot_y, plot_w, plot_h = self.overlay.get_plot_rect()
 
             self.time_scale.set_view(plot_x, plot_w)
             self.price_scale.set_viewport(plot_x, plot_y, plot_w, plot_h)
 
+            # Zoom
             if self.input.mouse.scroll_y != 0.0:
                 self.time_scale.zoom_at_x(self.input.mouse.x, self.input.mouse.scroll_y)
 
+            # Drag pan
             if self.input.mouse.left and not self._dragging:
                 self._dragging = True
             if not self.input.mouse.left:
@@ -439,20 +462,41 @@ class GLFWWindow:
             if self._dragging and self.input.mouse.dx != 0.0:
                 self.time_scale.pan_by_pixels(self.input.mouse.dx)
 
-            if self.input.is_key_down(glfw.KEY_Q):
-                glfw.set_window_should_close(self._window, True)
-
+            # Clear
             bg = self.chart_config["colors"]["bg"]
             glClearColor(float(bg[0]), float(bg[1]), float(bg[2]), float(bg[3]))
             glClear(GL_COLOR_BUFFER_BIT)
 
+            # Begin frame
             self.renderer.begin_frame(self.width, self.height)
 
-            self.overlay.draw(self.overlay_renderer)
+            # ---- VECTOR: texto real desde TTF ----
+            if self.vec_text is not None and self.vec_style is not None and self._vfont is not None:
+                self.vec_text.draw_text_ttf(
+                    x=10,
+                    y=10,
+                    text="HELLO JOB",
+                    font=self._vfont,
+                    resolution=(self.width, self.height),
+                    style=self.vec_style,
+                )
 
+            # Debug puntos (opcional)
+            # if self._debug_outline_points and self.vec_text is not None and self._glyph_A is not None:
+            #     self.vec_text.debug_draw_outline(
+            #         self.renderer,
+            #         self._glyph_A,
+            #         x=300,
+            #         y=400,
+            #         scale=0.15,
+            #     )
+
+            # overlays + axes
+            self.overlay.draw(self.overlay_renderer)
             self.price_axis_overlay.draw(self.overlay_renderer)
             self.time_axis_overlay.draw(self.overlay_renderer)
 
+            # series
             vr = self.time_scale.get_visible_range()
             vs = max(0, vr.start_idx)
             ve = min(self.total_bars - 1, vr.end_idx)
@@ -461,6 +505,7 @@ class GLFWWindow:
                 self.price_scale.autoscale_from_provider(vs, ve, lambda i: self.series.get_high_low(i))
                 self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
 
+            # tooltip + crosshair
             self.tooltip.draw(self.renderer)
             self.crosshair.draw(self.renderer)
 

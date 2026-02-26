@@ -136,6 +136,9 @@ class MsdfFont:
         x = float(x)
         y = float(y)
         size_px = max(1e-6, float(style.size_px))
+        if size_px < 16.0:
+            x = float(int(x))
+            y = float(int(y))
 
         # fondo opcional
         if style.bg_color is not None:

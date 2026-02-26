@@ -44,16 +44,31 @@ C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\s
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\__init__.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\basic2d.frag
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\basic2d.vert
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\bezier_text.frag
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\bezier_text.vert
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\bitmap_text.frag
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\bitmap_text.vert
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\msdf.frag
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\msdf.vert
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\bitmap_font.py
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\bitmap_text.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\fonts
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\fonts\segoeui
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\fonts\segoeui\trading_atlas.json
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\fonts\segoeui\trading_atlas.png
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\msdf_text.py
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\vector_bezier_font.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\texture.py
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\vector_bezier_text.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\requirements.txt
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\SansSerifCollection.ttf
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\times.ttf
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\timesbd.ttf
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\timesbi.ttf
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\timesi.ttf
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\tools
+C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\tools\list_ttc_faces.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\trading
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\trading\__init__.py
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\trading\backtest.py
@@ -186,8 +201,8 @@ from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     glClear,
     glClearColor,
-    glViewport,
     glGetString,
+    glViewport,
     GL_VERSION,
     GL_RENDERER,
     GL_VENDOR,
@@ -195,6 +210,7 @@ from OpenGL.GL import (
 
 from app.input import InputState
 from render.renderer import Renderer2D, Color
+from render.texture import load_texture_rgba
 
 from charts.scales.time_scale import TimeScale
 from charts.scales.price_scale import PriceScale
@@ -207,8 +223,14 @@ from data.fake_ohlc import make_fake_ohlc
 from charts.series.candles import CandleSeries
 
 # Text / MSDF
-from render.texture import Texture2D  # ajusta el nombre si tu clase se llama distinto
 from render.text.msdf_text import MsdfFontManager, MsdfFont, MsdfGlyph, MsdfFontMetrics
+
+# Text / Bitmap (FreeType)
+from render.text.bitmap_font import BitmapFont
+
+# Text / Vector Bezier (shader)
+from render.vector_bezier_text import VectorBezierTextRenderer, VectorTextStyle
+from render.text.vector_bezier_font import VectorBezierFont
 
 
 # -------------------------------------------------
@@ -243,6 +265,24 @@ class _OverlayRendererAdapter:
                 float(x1), float(y1), float(x2), float(y2),
                 self._to_color(color),
             )
+
+    # --- MSDF pass-through (para MsdfFont.draw_text) ---
+    def begin_msdf_text(self, texture_id: int, edge: float, smoothing: float, color=None, **_):
+        self._r.begin_msdf_text(
+            texture_id=int(texture_id),
+            edge=float(edge),
+            smoothing=float(smoothing),
+            color=self._to_color(color),
+        )
+
+    def draw_textured_quad_px(self, x, y, w, h, u0, v0, u1, v1, **_):
+        self._r.draw_textured_quad_px(
+            float(x), float(y), float(w), float(h),
+            u0=float(u0), v0=float(v0), u1=float(u1), v1=float(v1)
+        )
+
+    def end_msdf_text(self, **_):
+        self._r.end_msdf_text()
 
 
 class GLFWWindow:
@@ -288,45 +328,39 @@ class GLFWWindow:
                 "side": "right",
                 "show": True,
                 "width_px": 60,
-
-                # fuente (SevenSeg por ahora; MSDF después)
-                "font_size_px": 8,
-                "font_thickness_px": 1,
+                "font_size_px": 16,
                 "font_color": (0.78, 0.78, 0.78, 1.0),
                 "padding_px": 3,
-
+                "edge": 0.8,
+                "smoothing": 0.08,
+                "letter_spacing_px": 1.0,
                 "target_major_ticks": 12,
                 "minor_divisions": 3,
-
                 "grid_major_color": (0.25, 0.25, 0.25, 0.35),
                 "grid_minor_color": (0.25, 0.25, 0.25, 0.15),
                 "grid_major_width": 1.0,
                 "grid_minor_width": 1.0,
-
                 "tick_major_len": 7,
                 "tick_minor_len": 4,
                 "tick_width": 1.0,
                 "tick_color": (0.60, 0.60, 0.60, 0.9),
-
                 "decimals": 2,
             },
             "time_axis": {
                 "height_px": 28,
                 "show": True,
-
-                "font_size_px": 13,
-                "font_thickness_px": 2,
+                "font_size_px": 14,
                 "font_color": (0.78, 0.78, 0.78, 1.0),
                 "padding_px": 6,
-
+                "edge": 0.5,
+                "smoothing": 0.08,
+                "letter_spacing_px": 1.0,
                 "min_label_spacing_px": 100.0,
                 "format_compact": True,
-
                 "tick_in_axis": True,
                 "tick_length_px": 6,
                 "tick_width": 1,
                 "tick_color": (0.60, 0.60, 0.60, 0.9),
-
                 "gridline_in_plot": True,
                 "gridline_color": (0.25, 0.25, 0.25, 0.25),
                 "target_ticks": 5,
@@ -365,8 +399,8 @@ class GLFWWindow:
             input_state=self.input,
             series=self.series,
             style=CrosshairStyle(
-                color=(0.10, 0.10, 0.10, 0.55),
-                width=1.2
+                color=(0.9, 0.9, 0.9, 0.9),
+                width=1.0
             )
         )
 
@@ -386,11 +420,21 @@ class GLFWWindow:
         # ----------------------------
         self.msdf_fonts = MsdfFontManager()
 
+        # Fonts
+        self.bitmap_font: BitmapFont | None = None
+        self.vec_text: VectorBezierTextRenderer | None = None
+        self.vec_style: VectorTextStyle | None = None
+
+        self._vfont: VectorBezierFont | None = None
+        self._glyph_A = None
+
+        # Debug
+        self._debug_outline_points = True
+
     # -------------------------------------------------
     # MSDF init (después de renderer.init())
     # -------------------------------------------------
     def _init_msdf_fonts(self) -> None:
-        # app/window.py -> app/ -> root
         root = Path(__file__).resolve().parents[1]
 
         png_path = root / "render" / "text" / "fonts" / "segoeui" / "trading_atlas.png"
@@ -401,18 +445,9 @@ class GLFWWindow:
         if not json_path.exists():
             raise FileNotFoundError(f"No existe: {json_path}")
 
-        # 1) PNG -> texture_id
-        tex = Texture2D.from_file(str(png_path))
-        # Ajusta si tu API usa otro nombre
-        texture_id = getattr(tex, "texture_id", None)
-        if texture_id is None:
-            texture_id = getattr(tex, "id", None)
-        if texture_id is None:
-            raise AttributeError("Texture2D no expone 'texture_id' ni 'id'")
+        tex = load_texture_rgba(png_path)
+        texture_id = int(tex.id)
 
-        texture_id = int(texture_id)
-
-        # 2) JSON -> glyphs + metrics
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
@@ -422,7 +457,6 @@ class GLFWWindow:
         line_height = float(metrics_obj.get("lineHeight", (ascent - descent) if (ascent or descent) else 1.0))
         metrics = MsdfFontMetrics(line_height=line_height, ascent=ascent, descent=descent)
 
-        # base_size: si no está, asumimos 48 (tu generación)
         base_size_px = float(data.get("size", 48))
 
         atlas_obj = data.get("atlas", {})
@@ -432,7 +466,6 @@ class GLFWWindow:
             atlas_w, atlas_h = 1.0, 1.0
 
         glyphs: Dict[int, MsdfGlyph] = {}
-
         for g in data.get("glyphs", []):
             cp = g.get("unicode")
             if cp is None:
@@ -459,9 +492,7 @@ class GLFWWindow:
             pt = float(pb.get("top", 0.0))
 
             xoff = pl
-            # yoff: ajuste inicial; si lo ves corrido/invertido, lo afinamos
             yoff = -pt
-
             xadv = float(g.get("advance", w))
 
             glyphs[cp] = MsdfGlyph(
@@ -489,7 +520,6 @@ class GLFWWindow:
             self.input.set_key(key, True)
         elif action == glfw.RELEASE:
             self.input.set_key(key, False)
-
         if key == glfw.KEY_ESCAPE and action == glfw.PRESS:
             glfw.set_window_should_close(window, True)
 
@@ -541,15 +571,12 @@ class GLFWWindow:
         fb_w, fb_h = glfw.get_framebuffer_size(self._window)
         self._on_framebuffer_size(self._window, fb_w, fb_h)
 
-        try:
-            version = glGetString(GL_VERSION)
-            vendor = glGetString(GL_VENDOR)
-            renderer = glGetString(GL_RENDERER)
-            print("OpenGL:", version.decode() if version else "Unknown")
-            print("Vendor:", vendor.decode() if vendor else "Unknown")
-            print("Renderer:", renderer.decode() if renderer else "Unknown")
-        except Exception:
-            print("No se pudo obtener info de OpenGL")
+        version = glGetString(GL_VERSION)
+        vendor = glGetString(GL_VENDOR)
+        renderer = glGetString(GL_RENDERER)
+        print("OpenGL:", version.decode() if version else "Unknown")
+        print("Vendor:", vendor.decode() if vendor else "Unknown")
+        print("Renderer:", renderer.decode() if renderer else "Unknown")
 
     # -------------------------------------------------
     # Main loop
@@ -558,8 +585,37 @@ class GLFWWindow:
         self._init_glfw()
         assert self._window is not None
 
+        # Init renderer (ya con contexto)
         self.renderer.init()
+
+        # Vector renderer (shader)
+        self.vec_text = VectorBezierTextRenderer()
+        self.vec_style = VectorTextStyle(
+            size_px=32.0,
+            stroke_px=2.4,
+            aa_px=1.2,
+            letter_spacing_px=2.0,
+            color=(0.95, 0.95, 1.0, 1.0),
+        )
+
+        # Init MSDF fonts
         self._init_msdf_fonts()
+        msdf_font = self.msdf_fonts.get("segoeui")
+
+        # Init Bitmap font (tooltip)
+        root = Path(__file__).resolve().parents[1]
+        ttf_path = root / "times.ttf"
+        self.bitmap_font = BitmapFont(str(ttf_path), pixel_size=48, face_index=0)
+
+        # Assign fonts
+        self.price_axis_overlay.font = msdf_font
+        self.time_axis_overlay.font = msdf_font
+        self.crosshair.font = msdf_font
+        self.tooltip.font = self.bitmap_font
+
+        # Init VectorBezierFont + glyph UNA SOLA VEZ
+        self._vfont = VectorBezierFont(str(ttf_path), 128)
+        self._glyph_A = self._vfont.load_glyph("A")
 
         last = time.perf_counter()
         while not glfw.window_should_close(self._window):
@@ -570,19 +626,18 @@ class GLFWWindow:
             self.input.begin_frame()
             glfw.poll_events()
 
-            # Actualizar layout del chart
+            # Layout
             self.overlay.set_view(0.0, 0.0, float(self.width), float(self.height))
             plot_x, plot_y, plot_w, plot_h = self.overlay.get_plot_rect()
 
-            # Actualizar escalas
             self.time_scale.set_view(plot_x, plot_w)
             self.price_scale.set_viewport(plot_x, plot_y, plot_w, plot_h)
 
-            # Zoom con rueda
+            # Zoom
             if self.input.mouse.scroll_y != 0.0:
                 self.time_scale.zoom_at_x(self.input.mouse.x, self.input.mouse.scroll_y)
 
-            # Pan con drag
+            # Drag pan
             if self.input.mouse.left and not self._dragging:
                 self._dragging = True
             if not self.input.mouse.left:
@@ -590,40 +645,51 @@ class GLFWWindow:
             if self._dragging and self.input.mouse.dx != 0.0:
                 self.time_scale.pan_by_pixels(self.input.mouse.dx)
 
-            # Cerrar con Q
-            if self.input.is_key_down(glfw.KEY_Q):
-                glfw.set_window_should_close(self._window, True)
-
-            # ---------------- Render ----------------
+            # Clear
             bg = self.chart_config["colors"]["bg"]
             glClearColor(float(bg[0]), float(bg[1]), float(bg[2]), float(bg[3]))
             glClear(GL_COLOR_BUFFER_BIT)
 
+            # Begin frame
             self.renderer.begin_frame(self.width, self.height)
 
-            # 1) Overlay layout: bandas + separadores
-            self.overlay.draw(self.overlay_renderer)
+            # ---- VECTOR: texto real desde TTF ----
+            if self.vec_text is not None and self.vec_style is not None and self._vfont is not None:
+                self.vec_text.draw_text_ttf(
+                    x=10,
+                    y=10,
+                    text="HELLO JOB",
+                    font=self._vfont,
+                    resolution=(self.width, self.height),
+                    style=self.vec_style,
+                )
 
-            # 2) Ejes primero (grid atrás)
+            # Debug puntos (opcional)
+            if self._debug_outline_points and self.vec_text is not None and self._glyph_A is not None:
+                self.vec_text.debug_draw_outline(
+                    self.renderer,
+                    self._glyph_A,
+                    x=300,
+                    y=400,
+                    scale=0.15,
+                )
+
+            # overlays + axes
+            self.overlay.draw(self.overlay_renderer)
             self.price_axis_overlay.draw(self.overlay_renderer)
             self.time_axis_overlay.draw(self.overlay_renderer)
 
-            # 3) Velas + autoscale
+            # series
             vr = self.time_scale.get_visible_range()
             vs = max(0, vr.start_idx)
             ve = min(self.total_bars - 1, vr.end_idx)
 
             if ve >= vs:
-                self.price_scale.autoscale_from_provider(
-                    vs, ve,
-                    lambda i: self.series.get_high_low(i)
-                )
+                self.price_scale.autoscale_from_provider(vs, ve, lambda i: self.series.get_high_low(i))
                 self.series.draw(self.renderer, self.time_scale, self.price_scale, vs, ve)
 
-            # 4) Tooltip
+            # tooltip + crosshair
             self.tooltip.draw(self.renderer)
-
-            # 5) Crosshair
             self.crosshair.draw(self.renderer)
 
             self.renderer.end_frame()
@@ -680,34 +746,32 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\ch
 ================================================================================
 # charts/overlays/axis.py
 from __future__ import annotations
-from render.text.msdf_text import MsdfTextStyle, MsdfFont, MsdfGlyph, MsdfFontMetrics
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Tuple, List, Optional
+
+from render.text.msdf_text import MsdfTextStyle
 
 
 Rect = Tuple[float, float, float, float]
 
 
-
-# Price Axis Overlay (Ninja-like major/minor)
-# -----------------------------
 @dataclass
 class PriceAxisStyle:
     font_size_px: float = 13.0
-    font_thickness_px: float = 2.0
     font_color: Tuple[float, float, float, float] = (0.78, 0.78, 0.78, 1.0)
     label_bg: Optional[Tuple[float, float, float, float]] = None
     padding_px: float = 6.0
 
-    # gridlines
+    edge: float = 0.5
+    smoothing: float = 0.08
+    letter_spacing_px: float = 0.0
+
     grid_major_color: Tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.35)
     grid_minor_color: Tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.15)
     grid_major_width: float = 1.0
     grid_minor_width: float = 1.0
 
-    # ticks in axis
     tick_major_len: float = 7.0
     tick_minor_len: float = 4.0
     tick_width: float = 1.0
@@ -715,17 +779,16 @@ class PriceAxisStyle:
 
     decimals: int = 2
     target_major_ticks: int = 8
-    minor_divisions: int = 4  # Ninja-like: 4 subdivisiones
+    minor_divisions: int = 4
     label_minor: bool = True
-    min_label_gap_px: float = 10.0  # evita que se monten textos
-
+    min_label_gap_px: float = 10.0
 
 
 class PriceAxisOverlay:
     def __init__(self, overlay, price_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.price_scale = price_scale
-        self.font = MsdfFont()
+        self.font = None  # set desde window.run()
 
         self.style = PriceAxisStyle()
         if config:
@@ -734,6 +797,9 @@ class PriceAxisOverlay:
                     setattr(self.style, k, v)
 
     def draw(self, r) -> None:
+        if self.font is None:
+            return
+
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
         ax, ay, aw, ah = layout.price_axis_rect
@@ -742,7 +808,6 @@ class PriceAxisOverlay:
 
         side = (self.overlay.config["price_axis"].get("side", "right") or "right").lower()
 
-        # Ticks: majors + minors (si PriceScale soporta get_ticks_ex)
         majors: List[Tuple[float, float]] = []
         minors: List[Tuple[float, float]] = []
 
@@ -756,22 +821,21 @@ class PriceAxisOverlay:
         else:
             majors = self.price_scale.get_ticks(target_count=self.style.target_major_ticks)
 
-        # estilo fuente
         fstyle = MsdfTextStyle(
             size_px=float(self.style.font_size_px),
-            thickness_px=float(self.style.font_thickness_px),
-            spacing_px=2.0,
             color=self.style.font_color,
             bg_color=self.style.label_bg,
+            edge=float(self.style.edge),
+            smoothing=float(self.style.smoothing),
+            letter_spacing_px=float(self.style.letter_spacing_px),
         )
         pad = float(self.style.padding_px)
 
-        # 1) minor gridlines (suaves)
+        # minor ticks + labels
+        self._last_label_y = -1e9
         for price, yy in minors:
             y = float(yy)
-            # ////   r.draw_line_px(plot_x, y, plot_x + plot_w, y, color=self.style.grid_minor_color, width=float(self.style.grid_minor_width))
 
-            # tick minor
             if side == "left":
                 x1 = ax + aw - self.style.tick_minor_len
                 x2 = ax + aw
@@ -780,40 +844,28 @@ class PriceAxisOverlay:
                 x2 = ax + self.style.tick_minor_len
             r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=float(self.style.tick_width))
 
-            # --- label en minor (si querés precio en cada tick) ---
             if self.style.label_minor:
                 label = f"{float(price):.{int(self.style.decimals)}f}"
                 tw, th = self.font.measure_text(label, fstyle)
 
                 ty = y - th * 0.5
-                if side == "left":
-                    tx = ax + pad
-                else:
-                    tx = (ax + aw) - pad - tw
+                tx = (ax + pad) if side == "left" else (ax + aw) - pad - tw
 
-                # clamp dentro del eje
                 if ty < ay:
                     ty = ay
                 if ty + th > ay + ah:
                     ty = (ay + ah) - th
 
-                # anti-overlap vertical simple
-                if not hasattr(self, "_last_label_y"):
-                    self._last_label_y = -1e9
                 if abs(ty - self._last_label_y) >= (th + self.style.min_label_gap_px):
                     self.font.draw_text(r, tx, ty, label, fstyle)
                     self._last_label_y = ty
 
-            
-
-        # 2) major gridlines + labels
+        # major ticks + labels + grid
         for price, yy in majors:
             y = float(yy)
 
-            # major gridline
             r.draw_line_px(plot_x, y, plot_x + plot_w, y, color=self.style.grid_major_color, width=float(self.style.grid_major_width))
 
-            # tick major
             if side == "left":
                 x1 = ax + aw - self.style.tick_major_len
                 x2 = ax + aw
@@ -822,17 +874,12 @@ class PriceAxisOverlay:
                 x2 = ax + self.style.tick_major_len
             r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=float(self.style.tick_width))
 
-            # label (solo major)
             label = f"{float(price):.{int(self.style.decimals)}f}"
             tw, th = self.font.measure_text(label, fstyle)
 
             ty = y - th * 0.5
-            if side == "left":
-                tx = ax + pad
-            else:
-                tx = (ax + aw) - pad - tw
+            tx = (ax + pad) if side == "left" else (ax + aw) - pad - tw
 
-            # clamp dentro del eje
             if ty < ay:
                 ty = ay
             if ty + th > ay + ah:
@@ -841,36 +888,34 @@ class PriceAxisOverlay:
             self.font.draw_text(r, tx, ty, label, fstyle)
 
 
-# -----------------------------
-# Time Axis Overlay (compact + densidad)
-# -----------------------------
 @dataclass
 class TimeAxisStyle:
     font_size_px: float = 13.0
-    font_thickness_px: float = 2.0
     font_color: Tuple[float, float, float, float] = (0.78, 0.78, 0.78, 1.0)
     label_bg: Optional[Tuple[float, float, float, float]] = None
     padding_px: float = 6.0
+
+    edge: float = 0.5
+    smoothing: float = 0.08
+    letter_spacing_px: float = 0.0
 
     tick_len: float = 6.0
     tick_width: float = 1.0
     tick_color: Tuple[float, float, float, float] = (0.60, 0.60, 0.60, 0.9)
 
-    # gridlines verticales opcionales
     gridline_in_plot: bool = True
     grid_major_color: Tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.25)
     grid_major_width: float = 1.0
 
-    # densidad
-    min_label_spacing_px: float = 90.0  # evita amontonamiento
-    format_compact: bool = True         # Ninja-like
+    min_label_spacing_px: float = 90.0
+    format_compact: bool = True
 
 
 class TimeAxisOverlay:
     def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.time_scale = time_scale
-        self.font = MsdfFont()
+        self.font = None  # set desde window.run()
 
         self.style = TimeAxisStyle()
         if config:
@@ -879,6 +924,9 @@ class TimeAxisOverlay:
                     setattr(self.style, k, v)
 
     def draw(self, r) -> None:
+        if self.font is None:
+            return
+
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
         ax, ay, aw, ah = layout.time_axis_rect
@@ -893,15 +941,14 @@ class TimeAxisOverlay:
 
         fstyle = MsdfTextStyle(
             size_px=float(self.style.font_size_px),
-            thickness_px=float(self.style.font_thickness_px),
-            spacing_px=2.0,
             color=self.style.font_color,
             bg_color=self.style.label_bg,
+            edge=float(self.style.edge),
+            smoothing=float(self.style.smoothing),
+            letter_spacing_px=float(self.style.letter_spacing_px),
         )
         pad = float(self.style.padding_px)
 
-        # Step basado en píxeles: que no se solapen
-        # usamos index_to_x para estimar spacing promedio
         x0 = self.time_scale.index_to_x(vs)
         x1 = self.time_scale.index_to_x(min(vs + 1, ve))
         px_per_bar = max(1.0, abs(x1 - x0))
@@ -915,28 +962,23 @@ class TimeAxisOverlay:
             x = float(self.time_scale.index_to_x(i))
             ts = self.time_scale._timestamps[i]
 
-            # gridline vertical major
             if self.style.gridline_in_plot:
                 r.draw_line_px(x, plot_y, x, plot_y + plot_h, color=self.style.grid_major_color, width=float(self.style.grid_major_width))
 
-            # tick en eje
             y1 = ay
             y2 = ay + self.style.tick_len
             r.draw_line_px(x, y1, x, y2, color=self.style.tick_color, width=float(self.style.tick_width))
 
-            # label
             label = self._format_time(ts)
             tw, th = self.font.measure_text(label, fstyle)
             tx = x - tw * 0.5
             ty = (ay + ah) - pad - th
 
-            # clamp dentro del rect del eje
             if tx < ax + pad:
                 tx = ax + pad
             if tx + tw > ax + aw - pad:
                 tx = ax + aw - pad - tw
 
-            # anti-overlap adicional
             if tx < last_label_right + 6.0:
                 continue
             last_label_right = tx + tw
@@ -945,10 +987,8 @@ class TimeAxisOverlay:
 
     def _format_time(self, ts: datetime) -> str:
         if self.style.format_compact:
-            # Ninja-like: solo hora/minuto (y cambia a fecha cuando haga falta más adelante)
-            return ts.strftime("%I:%M %p").lstrip("0")  # "2:31 AM"
+            return ts.strftime("%I:%M %p").lstrip("0")
         return ts.strftime("%Y-%m-%d %H:%M")
-
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\chart_overlay.py
 ================================================================================
@@ -1173,15 +1213,15 @@ from typing import Tuple
 from render.renderer import Renderer2D, Color
 from app.input import InputState
 from charts.series.candles import CandleSeries
-from charts.overlays.chart_overlay import ChartOverlay, Rect
-from charts.overlays.axis import SevenSegStyle, SevenSegFont
+from charts.overlays.chart_overlay import ChartOverlay
+from render.text.msdf_text import MsdfTextStyle
 
 
 @dataclass
 class CrosshairStyle:
-    color: Tuple[float, float, float, float] = (0.9, 0.9, 0.9, 0.6)
+    color: Tuple[float, float, float, float] = (0.9, 0.9, 0.9, 0.9)
     width: float = 1.0
-    snap_to_bar: bool = False  # futura fase: alinear a centro de barra
+    snap_to_bar: bool = False
 
 
 class CrosshairOverlay:
@@ -1196,20 +1236,23 @@ class CrosshairOverlay:
         self.input = input_state
         self.series = series
         self.style = style or CrosshairStyle()
+
         self.snap_enabled = True
         self.snap_tolerance_px = 30.0
 
+        self.font = None  # se asigna desde window.run()
 
     def draw(self, renderer: Renderer2D) -> None:
-        layout = self.overlay.get_layout()
-        plot_rect = layout.plot_rect  # (x, y, w, h)
-        px, py, pw, ph = plot_rect
+        if self.font is None:
+            return
 
+        layout = self.overlay.get_layout()
+        px, py, pw, ph = layout.plot_rect
         if pw <= 0 or ph <= 0:
             return
 
-        mx = self.input.mouse.x
-        my = self.input.mouse.y
+        mx = float(self.input.mouse.x)
+        my = float(self.input.mouse.y)
 
         inside = (px <= mx <= px + pw) and (py <= my <= py + ph)
         if not inside:
@@ -1217,84 +1260,54 @@ class CrosshairOverlay:
 
         col = Color(*self.style.color)
 
-        # SNAP: encontrar la vela más cercana
+        # SNAP: vela más cercana
         snap_x = mx
         if self.snap_enabled:
             vr = self.overlay.time_scale.get_visible_range()
-            vs = max(0, vr.start_idx)
-            ve = min(len(self.series.data) - 1, vr.end_idx)
+            vs = max(0, int(vr.start_idx))
+            ve = min(len(self.series.data) - 1, int(vr.end_idx))
 
             if ve >= vs:
                 closest_idx = None
-                min_dist = float('inf')
-
+                min_dist = 1e18
                 for i in range(vs, ve + 1):
-                    candle_x = self.overlay.time_scale.index_to_x(i)
-                    dist = abs(candle_x - mx)
-                    if dist < min_dist:
-                        min_dist = dist
+                    cx = float(self.overlay.time_scale.index_to_x(i))
+                    d = abs(cx - mx)
+                    if d < min_dist:
+                        min_dist = d
                         closest_idx = i
 
                 if closest_idx is not None and min_dist <= self.snap_tolerance_px:
-                    snap_x = self.overlay.time_scale.index_to_x(closest_idx)
+                    snap_x = float(self.overlay.time_scale.index_to_x(closest_idx))
 
-        # Línea vertical (con snap)
-        renderer.draw_line_px(
-            snap_x, py,
-            snap_x, py + ph,
-            color=col,
-            width=self.style.width
-        )
+        # líneas
+        renderer.draw_line_px(snap_x, py, snap_x, py + ph, color=col, width=float(self.style.width))
+        renderer.draw_line_px(px, my, px + pw, my, color=col, width=float(self.style.width))
 
-        # Línea horizontal (sigue el mouse en Y)
-        renderer.draw_line_px(
-            px, my,
-            px + pw, my,
-            color=col,
-            width=self.style.width
-        )
-
-        # Etiquetas flotantes
-        # Precio en Y (derecha del eje)
-        price_y = my
-        # Nota: si PriceScale no tiene y_to_price, debes agregarlo (ver abajo)
-        price = self.overlay.price_scale.y_to_price(price_y)
+        # etiquetas
+        price = self.overlay.price_scale.y_to_price(my)
         price_str = f"{price:,.2f}"
 
-        # Tiempo en X (abajo del eje)
-        time_x = snap_x
-        time_ts = self.overlay.time_scale.x_to_time(time_x)
+        time_ts = self.overlay.time_scale.x_to_time(snap_x)
         time_str = time_ts.strftime("%Y-%m-%d %H:%M")
 
-        # Dibujar etiqueta precio (derecha del eje)
-        price_font = SevenSegStyle(size_px=13.0, thickness_px=1.8, color=(1,1,1,1))
-        price_w, price_h = SevenSegFont().measure_text(price_str, price_font)
-        renderer.draw_rect_px(
-            px + pw + 5, price_y - price_h / 2,
-            price_w + 10, price_h + 4,
-            Color(0.1, 0.1, 0.15, 0.9)
-        )
-        SevenSegFont().draw_text(
-            renderer,
-            px + pw + 10, price_y - price_h / 2 + 2,
-            price_str,
-            price_font
+        tag_style = MsdfTextStyle(
+            size_px=13.0,
+            color=(1, 1, 1, 1),
+            letter_spacing_px=1.0,
+            edge=0.5,
+            smoothing=0.08,
         )
 
-        # Dibujar etiqueta tiempo (abajo del eje)
-        time_font = SevenSegStyle(size_px=13.0, thickness_px=1.8, color=(1,1,1,1))
-        time_w, time_h = SevenSegFont().measure_text(time_str, time_font)
-        renderer.draw_rect_px(
-            time_x - time_w / 2 - 5, py + ph + 5,
-            time_w + 10, time_h + 4,
-            Color(0.1, 0.1, 0.15, 0.9)
-        )
-        SevenSegFont().draw_text(
-            renderer,
-            time_x - time_w / 2, py + ph + 7,
-            time_str,
-            time_font
-        )
+        # precio (a la derecha del plot)
+        pw_txt, ph_txt = self.font.measure_text(price_str, tag_style)
+        renderer.draw_rect_px(px + pw + 5, my - ph_txt / 2, pw_txt + 10, ph_txt + 4, Color(0.1, 0.1, 0.15, 0.9))
+        self.font.draw_text(renderer, px + pw + 10, my - ph_txt / 2 + 2, price_str, tag_style)
+
+        # tiempo (abajo del plot)
+        tw_txt, th_txt = self.font.measure_text(time_str, tag_style)
+        renderer.draw_rect_px(snap_x - tw_txt / 2 - 5, py + ph + 5, tw_txt + 10, th_txt + 4, Color(0.1, 0.1, 0.15, 0.9))
+        self.font.draw_text(renderer, snap_x - tw_txt / 2, py + ph + 7, time_str, tag_style)
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\grid.py
 ================================================================================
@@ -1312,14 +1325,12 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\ch
 # charts/overlays/tooltip.py
 from __future__ import annotations
 
-from typing import Optional, Tuple
-from datetime import datetime
-
+from typing import Optional
 from render.renderer import Renderer2D, Color
 from app.input import InputState
 from charts.scales.time_scale import TimeScale
 from charts.series.candles import CandleSeries
-from charts.overlays.axis import SevenSegStyle, SevenSegFont
+from render.text.msdf_text import MsdfTextStyle
 
 
 class TooltipOverlay:
@@ -1341,44 +1352,37 @@ class TooltipOverlay:
         self.input = input_state
         self.series = series
 
-        self.font = SevenSegFont()
+        self.font = None  # se asigna desde window.run()
 
-        self.style = SevenSegStyle(
-            size_px=13.0,
-            thickness_px=1.8,
-            spacing_px=1.5,
-            color=(0.95, 0.95, 1.0, 1.0),  # blanco-azulado suave
+        self.style = MsdfTextStyle(
+            size_px=16.0,
+            color=(0.95, 0.95, 1.0, 1.0),
+            letter_spacing_px=1.5,
+            edge=0.5,
+            smoothing=0.08,
         )
 
-        self.bg_color = Color(0.05, 0.05, 0.08, 0.92)      # negro muy oscuro semi-transparente
-        self.border_color = Color(0.5, 0.6, 0.8, 0.7)      # borde gris-azulado sutil
         self.padding = 8.0
-        self.max_distance_px = max_distance_px
+        self.max_distance_px = float(max_distance_px)
 
     def draw(self, renderer: Renderer2D) -> None:
-        mx = self.input.mouse.x
-        my = self.input.mouse.y
+        if self.font is None:
+            return
 
-        # Obtenemos el rectángulo del área de plot (para saber si estamos dentro)
-        # Nota: asumimos que el ChartOverlay tiene get_plot_rect()
-        # Si no lo tiene, podemos pasarlo como parámetro en __init__
-        from charts.overlays.chart_overlay import ChartOverlay
-        # Temporal: necesitamos el layout → lo ideal es pasarlo como parámetro o tener una referencia
-        # Por ahora, asumimos que se puede acceder desde otro lugar o lo pasamos después
+        mx = float(self.input.mouse.x)
+        my = float(self.input.mouse.y)
 
-        # Buscar la vela más cercana
         vr = self.time_scale.get_visible_range()
-        vs = max(0, vr.start_idx)
-        ve = min(len(self.series.data) - 1, vr.end_idx)
-
+        vs = max(0, int(vr.start_idx))
+        ve = min(len(self.series.data) - 1, int(vr.end_idx))
         if ve < vs:
             return
 
         closest_idx: Optional[int] = None
-        min_dist = float('inf')
+        min_dist = 1e18
 
         for i in range(vs, ve + 1):
-            candle_x = self.time_scale.index_to_x(i)
+            candle_x = float(self.time_scale.index_to_x(i))
             dist = abs(candle_x - mx)
             if dist < min_dist:
                 min_dist = dist
@@ -1387,22 +1391,15 @@ class TooltipOverlay:
         if closest_idx is None or min_dist > self.max_distance_px:
             return
 
-        # Obtenemos la vela
         bar = self.series.data[closest_idx]
         prev_close = self.series.data[closest_idx - 1].c if closest_idx > 0 else bar.c
-        change_pct = ((bar.c - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
-                # Colores dinámicos según vela alcista/bajista
+        change_pct = ((bar.c - prev_close) / prev_close * 100.0) if prev_close != 0 else 0.0
+
         is_bullish = bar.c >= bar.o
         tooltip_bg = Color(0.04, 0.15, 0.08, 0.92) if is_bullish else Color(0.15, 0.04, 0.04, 0.92)
         tooltip_border = Color(0.3, 0.9, 0.3, 0.75) if is_bullish else Color(0.9, 0.3, 0.3, 0.75)
         text_color = (0.7, 1.0, 0.7, 1.0) if is_bullish else (1.0, 0.7, 0.7, 1.0)
 
-                # Determinar color según vela alcista/bajista
-        is_bullish = bar.c >= bar.o
-        tooltip_bg_color = Color(0.05, 0.12, 0.08, 0.92) if is_bullish else Color(0.12, 0.05, 0.05, 0.92)
-        tooltip_border_color = Color(0.4, 0.8, 0.4, 0.7) if is_bullish else Color(0.8, 0.4, 0.4, 0.7)
-
-        # Preparar las líneas del tooltip
         lines = [
             bar.ts.strftime("%Y-%m-%d %H:%M"),
             f"O: {bar.o:,.2f}",
@@ -1412,67 +1409,43 @@ class TooltipOverlay:
             f"Chg: {change_pct:+.2f}%",
         ]
 
-        # Calcular dimensiones
-        max_width = 0.0
-        line_height = 16.0  # aproximado, puedes medirlo
-        total_height = len(lines) * line_height + 2 * self.padding
+        temp_style = MsdfTextStyle(
+            size_px=self.style.size_px,
+            color=text_color,
+            letter_spacing_px=self.style.letter_spacing_px,
+            edge=self.style.edge,
+            smoothing=self.style.smoothing,
+        )
 
+        # medir
+        max_w = 0.0
+        line_h = 16.0  # aproximado
         for line in lines:
-            w, _ = self.font.measure_text(line, self.style)
-            max_width = max(max_width, w)
+            w, _ = self.font.measure_text(line, temp_style)
+            max_w = max(max_w, float(w))
 
-        tooltip_width = max_width + 2 * self.padding
-        tooltip_height = total_height
+        tooltip_w = max_w + 2.0 * self.padding
+        tooltip_h = len(lines) * line_h + 2.0 * self.padding
 
-        # Posición relativa al mouse
-        tx = mx + 20
-        ty = my - tooltip_height - 15
+        # posición cerca del mouse
+        tx = mx + 20.0
+        ty = my - tooltip_h - 15.0
 
-        # Ajustar si se sale de pantalla (muy básico, puedes mejorarlo)
-        if tx + tooltip_width > 1280:  # ancho aproximado ventana
-            tx = mx - tooltip_width - 20
+        # clamp simple (si querés: usar self.overlay.get_layout() para width/height reales)
+        if tx + tooltip_w > 1280:
+            tx = mx - tooltip_w - 20.0
         if ty < 0:
-            ty = my + 30
+            ty = my + 30.0
 
-                    # Dibujar borde + fondo con colores dinámicos
-        renderer.draw_rect_px(
-            tx - 2, ty - 2,
-            tooltip_width + 4, tooltip_height + 4,
-            tooltip_border
-        )
-        renderer.draw_rect_px(
-            tx, ty,
-            tooltip_width, tooltip_height,
-            tooltip_bg
-        )   
+        # fondo + borde
+        renderer.draw_rect_px(tx - 2, ty - 2, tooltip_w + 4, tooltip_h + 4, tooltip_border)
+        renderer.draw_rect_px(tx, ty, tooltip_w, tooltip_h, tooltip_bg)
 
-                # Dibujar texto línea por línea con color dinámico según vela
-        text_color = (0.6, 1.0, 0.6, 1.0) if is_bullish else (1.0, 0.6, 0.6, 1.0)
-        temp_style = SevenSegStyle(
-            size_px=self.style.size_px,
-            thickness_px=self.style.thickness_px,
-            spacing_px=self.style.spacing_px,
-            color=text_color
-        )
-
-                # Texto con color dinámico
-        temp_style = SevenSegStyle(
-            size_px=self.style.size_px,
-            thickness_px=self.style.thickness_px,
-            spacing_px=self.style.spacing_px,
-            color=text_color
-        )
-
-        cursor_y = ty + self.padding
+        # texto
+        cy = ty + self.padding
         for line in lines:
-            self.font.draw_text(
-                renderer,
-                tx + self.padding,
-                cursor_y,
-                line,
-                temp_style  # ← Cambiado: usamos temp_style
-            )
-            cursor_y += line_height
+            self.font.draw_text(renderer, tx + self.padding, cy, line, temp_style)
+            cy += line_h
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\panes.py
 ================================================================================
@@ -2203,37 +2176,67 @@ def link_program(vertex_shader: int, fragment_shader: int) -> int:
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\renderer.py
 ================================================================================
-"""
-Renderer 2D en pixeles (OpenGL 3.3 core).
-
-A partir de ahora el Chart Engine trabajará en coordenadas de "app":
-- x, y, w, h en PIXELES.
-
-El renderer se encarga de:
-- Convertir pixeles → NDC en el vertex shader usando uResolution.
-- Batch simple por frame para líneas y rectángulos.
-- Mantener el pipeline moderno (VAO/VBO + shaders).
-
-IMPORTANTE:
-- Este renderer NO sabe nada de trading, velas, escalas, etc.
-- Solo dibuja primitivas 2D.
-"""
+# render/renderer.py
 from __future__ import annotations
+
 import ctypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Any
+from typing import Any, List
 
 import numpy as np
 from OpenGL.GL import (
-    GL_ARRAY_BUFFER, GL_BLEND, GL_DYNAMIC_DRAW, GL_FLOAT,
-    GL_FRAGMENT_SHADER, GL_LINES, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA,
-    GL_TRIANGLES, GL_VERTEX_SHADER, glBindBuffer, glBindVertexArray,
-    glBlendFunc, glBufferData, glDeleteBuffers, glDeleteProgram,
-    glDeleteVertexArrays, glDrawArrays, glEnable, glEnableVertexAttribArray,
-    glGenBuffers, glGenVertexArrays, glGetUniformLocation, glUseProgram,
-    glUniform2f, glVertexAttribPointer,
+    # --- basic pipeline ---
+    GL_ARRAY_BUFFER,
+    GL_BLEND,
+    GL_COMPILE_STATUS,
+    GL_DYNAMIC_DRAW,
+    GL_FALSE,
+    GL_FLOAT,
+    GL_FRAGMENT_SHADER,
+    GL_LINES,
+    GL_LINK_STATUS,
+    GL_ONE_MINUS_SRC_ALPHA,
+    GL_SRC_ALPHA,
+    GL_TEXTURE0,
+    GL_TEXTURE_2D,
+    GL_TRIANGLES,
+    GL_VERTEX_SHADER,
+    glActiveTexture,
+    glAttachShader,
+    glBindBuffer,
+    glBindTexture,
+    glBindVertexArray,
+    glBlendFunc,
+    glBufferData,
+    glBufferSubData,
+    glCompileShader,
+    glCreateProgram,
+    glCreateShader,
+    glDeleteBuffers,
+    glDeleteProgram,
+    glDeleteShader,
+    glDeleteVertexArrays,
+    glDrawArrays,
+    glEnable,
+    glEnableVertexAttribArray,
+    glGetProgramInfoLog,
+    glGetProgramiv,
+    glGetShaderInfoLog,
+    glGetShaderiv,
+    glGetUniformLocation,
+    glLinkProgram,
+    glShaderSource,
+    glUniform1f,
+    glUniform1i,
+    glUniform2f,
+    glUniform4f,
+    glUseProgram,
+    glGenBuffers,
+    glGenVertexArrays,
+    glVertexAttribPointer,
 )
+
 from render.gl_utils import compile_shader, link_program
 
 
@@ -2248,35 +2251,49 @@ class Color:
 
 class Renderer2D:
     """
-    Renderer 2D por batches (mínimo pero sólido).
+    Renderer 2D por batches (mínimo pero sólido) + MSDF text.
 
     Flujo por frame:
         begin_frame(w,h)
         draw_line_px(...), draw_rect_px(...)
+        (MSDF text puede dibujar en medio del frame)
         end_frame()
     """
 
     def __init__(self) -> None:
-        # GL objects
+        # Basic GL objects
         self._program: int | None = None
         self._vao: int | None = None
         self._vbo: int | None = None
-
-        # Uniform location
         self._u_resolution: int | None = None
 
         # Frame state
         self._width: int = 1
         self._height: int = 1
 
-        # Batches (cada vértice: x, y, r, g, b, a)
-        self._line_verts: List[float] = []  # legacy (GL_LINES)
-        self._tri_verts: List[float] = []   # rects + líneas gruesas como quads
+        # Batches: cada vértice = x, y, r, g, b, a
+        self._line_verts: List[float] = []  # GL_LINES
+        self._tri_verts: List[float] = []   # GL_TRIANGLES
+
+        # MSDF pipeline
+        self._msdf_prog: int | None = None
+        self._msdf_vao: int | None = None
+        self._msdf_vbo: int | None = None
+
+        self._u_msdf_res: int | None = None
+        self._u_msdf_tex: int | None = None
+        self._u_msdf_color: int | None = None
+        self._u_msdf_edge: int | None = None
+        self._u_msdf_smooth: int | None = None
+
+        self._msdf_active: bool = False
+        self._msdf_tex_id: int = 0
 
     # -------------------------
     # Lifecycle
     # -------------------------
     def init(self) -> None:
+        # Basic 2D shader
         vert_path = Path("render/shaders/basic2d.vert")
         frag_path = Path("render/shaders/basic2d.frag")
         vertex_src = vert_path.read_text(encoding="utf-8")
@@ -2288,6 +2305,7 @@ class Renderer2D:
 
         self._u_resolution = glGetUniformLocation(self._program, "uResolution")
 
+        # VAO/VBO para aPosPx(vec2) + aColor(vec4) => 6 floats
         self._vao = glGenVertexArrays(1)
         self._vbo = glGenBuffers(1)
 
@@ -2296,76 +2314,72 @@ class Renderer2D:
 
         glBufferData(GL_ARRAY_BUFFER, 1024 * 6 * 4, None, GL_DYNAMIC_DRAW)
 
-        # layout(location=0) vec2 aPosPx
         stride = 6 * 4
         glEnableVertexAttribArray(0)
-        glVertexAttribPointer(0, 2, GL_FLOAT, False, stride, ctypes.c_void_p(0))
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
 
-        # layout(location=1) vec4 aColor
         glEnableVertexAttribArray(1)
-        glVertexAttribPointer(1, 4, GL_FLOAT, False, stride, ctypes.c_void_p(8))
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(8))
 
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         glBindVertexArray(0)
 
+        # Blend
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
+        # MSDF pipeline
+        self._init_msdf_pipeline()
+
     def shutdown(self) -> None:
+        # basic
         if self._program is not None:
-            glDeleteProgram(self._program); self._program = None
+            glDeleteProgram(self._program)
+            self._program = None
         if self._vbo is not None:
-            glDeleteBuffers(1, [self._vbo]); self._vbo = None
+            glDeleteBuffers(1, [self._vbo])
+            self._vbo = None
         if self._vao is not None:
-            glDeleteVertexArrays(1, [self._vao]); self._vao = None
+            glDeleteVertexArrays(1, [self._vao])
+            self._vao = None
+
+        # msdf
+        if self._msdf_prog is not None:
+            glDeleteProgram(self._msdf_prog)
+            self._msdf_prog = None
+        if self._msdf_vbo is not None:
+            glDeleteBuffers(1, [self._msdf_vbo])
+            self._msdf_vbo = None
+        if self._msdf_vao is not None:
+            glDeleteVertexArrays(1, [self._msdf_vao])
+            self._msdf_vao = None
 
     # -------------------------
     # Frame API
     # -------------------------
     def begin_frame(self, width: int, height: int) -> None:
+        self.width = int(width)
+        self.height = int(height)
         self._width = max(1, int(width))
         self._height = max(1, int(height))
         self._line_verts.clear()
         self._tri_verts.clear()
 
     def end_frame(self) -> None:
-        assert self._program is not None and self._vao is not None and self._vbo is not None
-        assert self._u_resolution is not None
-
-        glUseProgram(self._program)
-        glUniform2f(self._u_resolution, float(self._width), float(self._height))
-        glBindVertexArray(self._vao)
-        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
-
-        # Triángulos (rects + líneas gruesas)
-        if self._tri_verts:
-            tri_arr = np.array(self._tri_verts, dtype=np.float32)
-            glBufferData(GL_ARRAY_BUFFER, tri_arr.nbytes, tri_arr, GL_DYNAMIC_DRAW)
-            glDrawArrays(GL_TRIANGLES, 0, len(tri_arr) // 6)
-
-        # Líneas finas legacy (si alguien aún las usa)
-        if self._line_verts:
-            line_arr = np.array(self._line_verts, dtype=np.float32)
-            glBufferData(GL_ARRAY_BUFFER, line_arr.nbytes, line_arr, GL_DYNAMIC_DRAW)
-            glDrawArrays(GL_LINES, 0, len(line_arr) // 6)
-
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
-        glBindVertexArray(0)
-        glUseProgram(0)
+        # al final, dibujamos lo que quede en batch
+        self.flush()
 
     # -------------------------
     # Helpers
     # -------------------------
     @staticmethod
     def _to_color(c: Any) -> Color:
-        """Acepta Color o (r,g,b[,a]) en [0..1]."""
         if isinstance(c, Color):
             return c
         if isinstance(c, (tuple, list)) and (3 <= len(c) <= 4):
             r = float(c[0]); g = float(c[1]); b = float(c[2])
             a = float(c[3]) if len(c) == 4 else 1.0
             return Color(r, g, b, a)
-        # fallback blanco
         return Color(1.0, 1.0, 1.0, 1.0)
 
     @staticmethod
@@ -2377,11 +2391,6 @@ class Renderer2D:
     # -------------------------
     def draw_line_px(self, x1: float, y1: float, x2: float, y2: float,
                      color: Any, width: float = 1.0, **_) -> None:
-        """
-        Línea en píxeles con GROSOR. No depende de glLineWidth.
-        - H/V: usa rect (nítido).
-        - Diagonal: genera un quad (dos triángulos) alrededor del segmento.
-        """
         col = self._to_color(color)
         w = max(1.0, float(width))
         x1 = float(x1); y1 = float(y1); x2 = float(x2); y2 = float(y2)
@@ -2400,30 +2409,22 @@ class Renderer2D:
             self.draw_rect_px(x_left, y_min, w, y_max - y_min, col)
             return
 
-        # Diagonal: quad
+        # Diagonal -> quad
         self._push_quad_line(x1, y1, x2, y2, w, col)
 
     def draw_rect_px(self, x: float, y: float, w: float, h: float, color: Any, **_) -> None:
-        """
-        Rect relleno (dos triángulos). (x,y) esquina sup-izquierda (coordenadas de app).
-        """
         col = self._to_color(color)
         x2 = x + w
         y2 = y + h
 
-        # Tri 1
         self._push_vertex(self._tri_verts, x,  y,  col)
         self._push_vertex(self._tri_verts, x2, y,  col)
         self._push_vertex(self._tri_verts, x2, y2, col)
 
-        # Tri 2
         self._push_vertex(self._tri_verts, x,  y,  col)
         self._push_vertex(self._tri_verts, x2, y2, col)
         self._push_vertex(self._tri_verts, x,  y2, col)
 
-    # -------------------------
-    # Internal: quad para línea diagonal
-    # -------------------------
     def _push_quad_line(self, x1: float, y1: float, x2: float, y2: float,
                         width: float, col: Color) -> None:
         import math
@@ -2434,28 +2435,225 @@ class Renderer2D:
             return
 
         nx = -dy / L
-        ny =  dx / L
+        ny = dx / L
         half = (width - 1.0) * 0.5
 
         ox = nx * half
         oy = ny * half
 
-        # Quad CCW
         x1a, y1a = x1 - ox, y1 - oy
         x1b, y1b = x1 + ox, y1 + oy
         x2b, y2b = x2 + ox, y2 + oy
         x2a, y2a = x2 - ox, y2 - oy
 
-        # Triángulo 1: p1, p2, p3
         self._push_vertex(self._tri_verts, x1a, y1a, col)
         self._push_vertex(self._tri_verts, x1b, y1b, col)
         self._push_vertex(self._tri_verts, x2b, y2b, col)
 
-        # Triángulo 2: p1, p3, p4
         self._push_vertex(self._tri_verts, x1a, y1a, col)
         self._push_vertex(self._tri_verts, x2b, y2b, col)
         self._push_vertex(self._tri_verts, x2a, y2a, col)
 
+    # -------------------------
+    # Flush (IMPORTANT)
+    # -------------------------
+    def flush(self) -> None:
+        """Dibuja lo acumulado en _tri_verts/_line_verts y limpia los buffers."""
+        if not self._tri_verts and not self._line_verts:
+            return
+
+        assert self._program is not None and self._vao is not None and self._vbo is not None
+        assert self._u_resolution is not None
+
+        glUseProgram(self._program)
+        glUniform2f(self._u_resolution, float(self._width), float(self._height))
+        glBindVertexArray(self._vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
+
+        if self._tri_verts:
+            tri_arr = np.array(self._tri_verts, dtype=np.float32)
+            glBufferData(GL_ARRAY_BUFFER, tri_arr.nbytes, tri_arr, GL_DYNAMIC_DRAW)
+            glDrawArrays(GL_TRIANGLES, 0, len(tri_arr) // 6)
+
+        if self._line_verts:
+            line_arr = np.array(self._line_verts, dtype=np.float32)
+            glBufferData(GL_ARRAY_BUFFER, line_arr.nbytes, line_arr, GL_DYNAMIC_DRAW)
+            glDrawArrays(GL_LINES, 0, len(line_arr) // 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
+        glUseProgram(0)
+
+        self._tri_verts.clear()
+        self._line_verts.clear()
+
+    # -------------------------------------------------
+    # MSDF TEXT
+    # -------------------------------------------------
+    def _compile_shader_msdf(self, shader_type, src: str) -> int:
+        sid = glCreateShader(shader_type)
+        glShaderSource(sid, src)
+        glCompileShader(sid)
+
+        ok = glGetShaderiv(sid, GL_COMPILE_STATUS)
+        if not ok:
+            err = glGetShaderInfoLog(sid).decode("utf-8", "ignore")
+            glDeleteShader(sid)
+            raise RuntimeError(f"MSDF shader compile error:\n{err}")
+        return sid
+
+    def _link_program_msdf(self, vs_src: str, fs_src: str) -> int:
+        vs = self._compile_shader_msdf(GL_VERTEX_SHADER, vs_src)
+        fs = self._compile_shader_msdf(GL_FRAGMENT_SHADER, fs_src)
+
+        pid = glCreateProgram()
+        glAttachShader(pid, vs)
+        glAttachShader(pid, fs)
+        glLinkProgram(pid)
+
+        ok = glGetProgramiv(pid, GL_LINK_STATUS)
+        glDeleteShader(vs)
+        glDeleteShader(fs)
+
+        if not ok:
+            err = glGetProgramInfoLog(pid).decode("utf-8", "ignore")
+            glDeleteProgram(pid)
+            raise RuntimeError(f"MSDF program link error:\n{err}")
+        return pid
+
+    def _init_msdf_pipeline(self) -> None:
+        vs_src = r"""
+        #version 330 core
+        layout(location=0) in vec2 aPosPx;
+        layout(location=1) in vec2 aUV;
+
+        uniform vec2 uResolution;
+        out vec2 vUV;
+
+        void main() {
+            float x = (aPosPx.x / uResolution.x) * 2.0 - 1.0;
+            float y = 1.0 - (aPosPx.y / uResolution.y) * 2.0;
+            gl_Position = vec4(x, y, 0.0, 1.0);
+            vUV = aUV;
+        }
+        """
+
+        fs_src = r"""
+        #version 330 core
+        in vec2 vUV;
+        out vec4 FragColor;
+
+        uniform sampler2D uTex;
+        uniform vec4 uColor;
+        uniform float uEdge;
+        uniform float uSmoothing;
+
+        float median(float r, float g, float b) {
+            return max(min(r, g), min(max(r, g), b));
+        }
+
+        void main() {
+            vec3 smp = texture(uTex, vUV).rgb;
+            float sd = median(smp.r, smp.g, smp.b);
+            float alpha = smoothstep(uEdge - uSmoothing, uEdge + uSmoothing, sd);
+            FragColor = vec4(uColor.rgb, uColor.a * alpha);
+        }
+        """
+
+        self._msdf_prog = self._link_program_msdf(vs_src, fs_src)
+
+        self._u_msdf_res = glGetUniformLocation(self._msdf_prog, "uResolution")
+        self._u_msdf_tex = glGetUniformLocation(self._msdf_prog, "uTex")
+        self._u_msdf_color = glGetUniformLocation(self._msdf_prog, "uColor")
+        self._u_msdf_edge = glGetUniformLocation(self._msdf_prog, "uEdge")
+        self._u_msdf_smooth = glGetUniformLocation(self._msdf_prog, "uSmoothing")
+
+        self._msdf_vao = glGenVertexArrays(1)
+        self._msdf_vbo = glGenBuffers(1)
+
+        glBindVertexArray(self._msdf_vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self._msdf_vbo)
+
+        glBufferData(GL_ARRAY_BUFFER, 6 * 4 * 4, None, GL_DYNAMIC_DRAW)
+
+        stride = 4 * 4
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(8))
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
+
+    def begin_msdf_text(self, texture_id: int, edge: float, smoothing: float, color: Any) -> None:
+        """
+        IMPORTANT:
+        - Flushea el batch 2D antes de dibujar texto, así el texto NO queda tapado.
+        """
+        if self._msdf_prog is None or self._msdf_vao is None:
+            return
+
+        # 🔥 clave para que se vean los números
+        self.flush()
+
+        self._msdf_active = True
+        self._msdf_tex_id = int(texture_id)
+
+        glUseProgram(self._msdf_prog)
+
+        assert self._u_msdf_res is not None
+        assert self._u_msdf_edge is not None
+        assert self._u_msdf_smooth is not None
+        assert self._u_msdf_color is not None
+        assert self._u_msdf_tex is not None
+
+        glUniform2f(self._u_msdf_res, float(self._width), float(self._height))
+        glUniform1f(self._u_msdf_edge, float(edge))
+        glUniform1f(self._u_msdf_smooth, float(smoothing))
+
+        col = self._to_color(color)
+        glUniform4f(self._u_msdf_color, col.r, col.g, col.b, col.a)
+
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self._msdf_tex_id)
+        glUniform1i(self._u_msdf_tex, 0)
+
+        glBindVertexArray(self._msdf_vao)
+
+    def draw_textured_quad_px(self, x: float, y: float, w: float, h: float,
+                              u0: float, v0: float, u1: float, v1: float) -> None:
+        if not self._msdf_active or self._msdf_vbo is None or self._msdf_vao is None:
+            return
+
+        # seguridad: aseguramos VAO correcto
+        glBindVertexArray(self._msdf_vao)
+
+        x = float(x); y = float(y); w = float(w); h = float(h)
+        u0 = float(u0); v0 = float(v0); u1 = float(u1); v1 = float(v1)
+
+        verts = (ctypes.c_float * (6 * 4))(
+            x,     y,     u0, v0,
+            x + w, y,     u1, v0,
+            x + w, y + h, u1, v1,
+
+            x,     y,     u0, v0,
+            x + w, y + h, u1, v1,
+            x,     y + h, u0, v1,
+        )
+
+        glBindBuffer(GL_ARRAY_BUFFER, self._msdf_vbo)
+        glBufferSubData(GL_ARRAY_BUFFER, 0, ctypes.sizeof(verts), verts)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+
+    def end_msdf_text(self) -> None:
+        if not self._msdf_active:
+            return
+        self._msdf_active = False
+        glBindVertexArray(0)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        glUseProgram(0)
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\__init__.py
 ================================================================================
@@ -2494,6 +2692,137 @@ void main() {
 }
 
 ================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\bezier_text.frag
+================================================================================
+#version 330 core
+
+in vec2 vUV;
+out vec4 FragColor;
+
+uniform vec4  uColor;      // RGBA
+uniform vec2  uGlyphPx;    // (w,h) del quad en pixeles
+uniform float uStrokePx;   // grosor del trazo en px (aprox)
+uniform float uAAPx;       // suavizado AA en px
+
+const int MAX_CURVES = 64;
+
+// A: p0.xy, p1.xy
+uniform vec4 uCurvesA[MAX_CURVES];
+// B: p2.xy
+uniform vec4 uCurvesB[MAX_CURVES];
+uniform int  uCurveCount;
+
+float dist_to_segment(vec2 p, vec2 a, vec2 b) {
+    vec2 ab = b - a;
+    float ab2 = dot(ab, ab);
+    if (ab2 < 1e-8) return length(p - a);
+    float t = clamp(dot(p - a, ab) / ab2, 0.0, 1.0);
+    vec2 q = a + t * ab;
+    return length(p - q);
+}
+
+vec2 quad_bezier(vec2 p0, vec2 p1, vec2 p2, float t) {
+    float u = 1.0 - t;
+    return (u*u)*p0 + (2.0*u*t)*p1 + (t*t)*p2;
+}
+
+void main() {
+    vec2 p = vUV; // 0..1 dentro del glyph
+
+    float d = 1e9;
+
+    // Subdivisión por curva
+    const int SUBDIV = 10;
+
+    for (int i = 0; i < uCurveCount; i++) {
+        vec4 A = uCurvesA[i];
+        vec4 B = uCurvesB[i];
+
+        vec2 p0 = A.xy;
+        vec2 p1 = A.zw;
+        vec2 p2 = B.xy;
+
+        vec2 prev = quad_bezier(p0, p1, p2, 0.0);
+        for (int s = 1; s <= SUBDIV; s++) {
+            float t = float(s) / float(SUBDIV);
+            vec2 cur = quad_bezier(p0, p1, p2, t);
+            d = min(d, dist_to_segment(p, prev, cur));
+            prev = cur;
+        }
+    }
+
+    // d está en 0..1 (normalizado), lo pasamos a px aprox
+    float pxScale = max(1.0, min(uGlyphPx.x, uGlyphPx.y));
+    float dpx = d * pxScale;
+
+    float halfStroke = 0.5 * uStrokePx;
+    float aa = max(0.75, uAAPx);
+
+    float alpha = 1.0 - smoothstep(halfStroke - aa, halfStroke + aa, dpx);
+    if (alpha <= 0.001) discard;
+
+    FragColor = vec4(uColor.rgb, uColor.a * alpha);
+}
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\bezier_text.vert
+================================================================================
+#version 330 core
+
+layout (location = 0) in vec2 aPosPx; // posición en pixeles
+layout (location = 1) in vec2 aUV;    // 0..1
+
+uniform vec2 uResolution;             // (W,H)
+
+out vec2 vUV;
+
+void main() {
+    // px -> NDC (y-down)
+    vec2 ndc = vec2(
+        (aPosPx.x / uResolution.x) * 2.0 - 1.0,
+        1.0 - (aPosPx.y / uResolution.y) * 2.0
+    );
+
+    gl_Position = vec4(ndc, 0.0, 1.0);
+    vUV = aUV;
+}
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\bitmap_text.frag
+================================================================================
+#version 330 core
+in vec2 vUV;
+out vec4 FragColor;
+
+uniform sampler2D uTexture;
+uniform vec4 uColor;
+
+void main()
+{
+    float a = texture(uTexture, vec2(vUV.x, 1.0 - vUV.y)).r;
+    FragColor = vec4(uColor.rgb, uColor.a * a);
+}
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\bitmap_text.vert
+================================================================================
+#version 330 core
+layout (location = 0) in vec4 aVertex; // x,y,u,v
+
+uniform vec2 uResolution;
+out vec2 vUV;
+
+void main()
+{
+    vec2 pos = aVertex.xy;
+
+    // pixel -> NDC (y_down)
+    vec2 ndc = vec2(
+        (pos.x / uResolution.x) * 2.0 - 1.0,
+        1.0 - (pos.y / uResolution.y) * 2.0
+    );
+
+    gl_Position = vec4(ndc, 0.0, 1.0);
+    vUV = aVertex.zw;
+}
+================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\msdf.frag
 ================================================================================
 #version 330 core
@@ -2503,22 +2832,31 @@ out vec4 FragColor;
 
 uniform sampler2D uTex;
 uniform vec4 uColor;
-uniform float uEdge;
-uniform float uSmoothing;
+uniform float uPxRange;
 
 float median(float r, float g, float b) {
-    return max(min(r,g), min(max(r,g), b));
+    return max(min(r, g), min(max(r, g), b));
 }
 
-void main()
-{
-    vec3 msd = texture(uTex, vUV).rgb;
-    float sd = median(msd.r, msd.g, msd.b);
+void main() {
+    vec3 s = texture(uTex, vUV).rgb;
 
-    float alpha = smoothstep(uEdge - uSmoothing, uEdge + uSmoothing, sd);
+    // signed distance centrada en 0
+    float sd = median(s.r, s.g, s.b) - 0.5;
+
+    // distancia "en pixeles" del campo
+    float distPx = uPxRange * sd;
+
+    // ✅ ancho del borde basado en derivadas del sd (más estable)
+    float w = uPxRange * fwidth(sd);
+
+    // ✅ clamp mínimo para tamaños pequeños
+    w = max(w, 0.85);     // prueba 0.75..1.25
+
+    float alpha = smoothstep(-w, w, distPx);
+
     FragColor = vec4(uColor.rgb, uColor.a * alpha);
 }
-
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\shaders\msdf.vert
 ================================================================================
@@ -2543,6 +2881,415 @@ void main()
 }
 
 ================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\bitmap_font.py
+================================================================================
+# render/text/bitmap_font.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple, Protocol
+
+import freetype
+from OpenGL.GL import (
+    GL_CLAMP_TO_EDGE,
+    GL_LINEAR,
+    GL_NEAREST,
+    GL_RED,
+    GL_R8,
+    GL_TEXTURE_2D,
+    GL_TEXTURE_MAG_FILTER,
+    GL_TEXTURE_MIN_FILTER,
+    GL_TEXTURE_WRAP_S,
+    GL_TEXTURE_WRAP_T,
+    GL_UNPACK_ALIGNMENT,
+    GL_UNSIGNED_BYTE,
+    glBindTexture,
+    glDeleteTextures,
+    glGenTextures,
+    glPixelStorei,
+    glTexImage2D,
+    glTexParameteri,
+)
+
+Vec4 = Tuple[float, float, float, float]
+
+
+class _TextStyleLike(Protocol):
+    size_px: float
+    color: Vec4
+    bg_color: Optional[Vec4]
+    letter_spacing_px: float
+
+
+@dataclass(frozen=True)
+class BitmapGlyph:
+    tex_id: int
+    w: int
+    h: int
+    bearing_x: int
+    bearing_y: int
+    advance_px: float
+
+
+class BitmapFont:
+    def __init__(
+        self,
+        ttf_path: str,
+        pixel_size: int = 24,
+        *,
+        face_index: int = 0,
+        char_range: Tuple[int, int] = (32, 126),
+        letter_spacing_px: float = 0.0,
+        linear_filter: bool = True,
+    ) -> None:
+        self.ttf_path = str(ttf_path)
+        self.pixel_size = int(pixel_size)
+        self.face_index = int(face_index)
+        self.char_range = (int(char_range[0]), int(char_range[1]))
+        self.default_letter_spacing_px = float(letter_spacing_px)
+        self.linear_filter = bool(linear_filter)
+
+        self._face = freetype.Face(self.ttf_path, index=self.face_index)
+        self._face.set_pixel_sizes(0, self.pixel_size)
+
+        self.glyphs: Dict[int, BitmapGlyph] = {}
+        self._owned_tex_ids: list[int] = []
+
+        self.ascent_px = self._face.size.ascender / 64.0
+        self.descent_px = self._face.size.descender / 64.0
+        self.line_height_px = self._face.size.height / 64.0
+
+        # Lazy: se crea en el primer draw_text (con contexto ya listo)
+        self._text_renderer = None
+
+        self._build_glyphs()
+
+    def draw_text(self, renderer: Any, x: float, y: float, text: str, style: Any) -> None:
+        """API compatible con MsdfFont.draw_text(...) para TooltipOverlay."""
+        # flush del batch 2D
+        try:
+            renderer.flush()
+        except Exception:
+            pass
+
+        # lazy init (ya con contexto)
+        if self._text_renderer is None:
+            from render.text.bitmap_text import BitmapTextRenderer
+            self._text_renderer = BitmapTextRenderer()
+
+        size_px = float(getattr(style, "size_px", 16.0))
+        color = getattr(style, "color", (1.0, 1.0, 1.0, 1.0))
+        spacing = float(getattr(style, "letter_spacing_px", 0.0))
+
+        # requiere que Renderer2D guarde width/height en begin_frame
+        w = int(getattr(renderer, "width"))
+        h = int(getattr(renderer, "height"))
+
+        self._text_renderer.draw_text(
+            self,
+            text,
+            float(x),
+            float(y),
+            size_px,
+            color,
+            (w, h),
+            letter_spacing_px=spacing,
+        )
+
+    def destroy(self) -> None:
+        if self._owned_tex_ids:
+            glDeleteTextures(self._owned_tex_ids)
+            self._owned_tex_ids.clear()
+        self.glyphs.clear()
+
+    def _build_glyphs(self) -> None:
+        start, end = self.char_range
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+
+        for code in range(start, end + 1):
+            ch = chr(code)
+            self._face.load_char(ch, freetype.FT_LOAD_RENDER)
+            g = self._face.glyph
+
+            bmp = g.bitmap
+            w = int(bmp.width)
+            h = int(bmp.rows)
+
+            tex_id = int(glGenTextures(1))
+            self._owned_tex_ids.append(tex_id)
+
+            glBindTexture(GL_TEXTURE_2D, tex_id)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+
+            if self.linear_filter:
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            else:
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+
+            if w > 0 and h > 0:
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, bmp.buffer)
+            else:
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 1, 1, 0, GL_RED, GL_UNSIGNED_BYTE, b"\x00")
+
+            glBindTexture(GL_TEXTURE_2D, 0)
+
+            self.glyphs[code] = BitmapGlyph(
+                tex_id=tex_id,
+                w=w,
+                h=h,
+                bearing_x=int(g.bitmap_left),
+                bearing_y=int(g.bitmap_top),
+                advance_px=float(g.advance.x) / 64.0,
+            )
+
+    def get_glyph(self, ch: str) -> Optional[BitmapGlyph]:
+        return self.glyphs.get(ord(ch))
+
+    def measure_text(self, text: str, style: _TextStyleLike) -> Tuple[float, float]:
+        size_px = max(1e-6, float(style.size_px))
+        s = size_px / float(self.pixel_size)
+        spacing = float(getattr(style, "letter_spacing_px", self.default_letter_spacing_px))
+
+        x = 0.0
+        for ch in text:
+            g = self.get_glyph(ch)
+            if g is None:
+                x += (size_px * 0.33) + spacing
+            else:
+                x += (g.advance_px * s) + spacing
+
+        h = float(self.line_height_px) * s
+        return float(x), float(h)
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\bitmap_text.py
+================================================================================
+# render/text/bitmap_text.py
+from __future__ import annotations
+
+import ctypes
+from pathlib import Path
+from typing import Tuple
+
+import numpy as np
+from OpenGL.GL import (
+    GL_ARRAY_BUFFER,
+    GL_BLEND,
+    GL_COMPILE_STATUS,
+    GL_DYNAMIC_DRAW,
+    GL_FALSE,
+    GL_FLOAT,
+    GL_FRAGMENT_SHADER,
+    GL_LINK_STATUS,
+    GL_ONE_MINUS_SRC_ALPHA,
+    GL_SRC_ALPHA,
+    GL_TEXTURE0,
+    GL_TEXTURE_2D,
+    GL_TRIANGLES,
+    GL_TRUE,
+    GL_VERTEX_SHADER,
+    glActiveTexture,
+    glAttachShader,
+    glBindBuffer,
+    glBindTexture,
+    glBindVertexArray,
+    glBlendFunc,
+    glBufferData,
+    glBufferSubData,
+    glCompileShader,
+    glCreateProgram,
+    glCreateShader,
+    glDeleteProgram,
+    glDeleteShader,
+    glDeleteVertexArrays,
+    glDeleteBuffers,
+    glDrawArrays,
+    glEnable,
+    glEnableVertexAttribArray,
+    glGetProgramInfoLog,
+    glGetProgramiv,
+    glGetShaderInfoLog,
+    glGetShaderiv,
+    glGetUniformLocation,
+    glLinkProgram,
+    glShaderSource,
+    glUniform1i,
+    glUniform2f,
+    glUniform4f,
+    glUseProgram,
+    glVertexAttribPointer,
+    glGenVertexArrays,
+    glGenBuffers,
+)
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _compile_shader(shader_type: int, src: str) -> int:
+    sid = glCreateShader(shader_type)
+    glShaderSource(sid, src)
+    glCompileShader(sid)
+
+    ok = glGetShaderiv(sid, GL_COMPILE_STATUS)
+    if ok != GL_TRUE:
+        info = glGetShaderInfoLog(sid).decode("utf-8", errors="ignore")
+        glDeleteShader(sid)
+        raise RuntimeError(f"Shader compile failed:\n{info}")
+
+    return sid
+
+
+def _link_program(vs: int, fs: int) -> int:
+    pid = glCreateProgram()
+    glAttachShader(pid, vs)
+    glAttachShader(pid, fs)
+    glLinkProgram(pid)
+
+    ok = glGetProgramiv(pid, GL_LINK_STATUS)
+    if ok != GL_TRUE:
+        info = glGetProgramInfoLog(pid).decode("utf-8", errors="ignore")
+        glDeleteProgram(pid)
+        raise RuntimeError(f"Program link failed:\n{info}")
+
+    return pid
+
+
+class BitmapTextRenderer:
+    """
+    Renderer simple (como en el tutorial clásico):
+    - 1 VAO/VBO
+    - por glyph: actualiza vertices y dibuja 2 triángulos
+    - textura del glyph en canal R
+    """
+
+    def __init__(self, shader_dir: str = "render/shaders") -> None:
+        shader_dir_path = Path(shader_dir)
+        vert_path = shader_dir_path / "bitmap_text.vert"
+        frag_path = shader_dir_path / "bitmap_text.frag"
+
+        if not vert_path.exists():
+            raise FileNotFoundError(f"No existe shader: {vert_path}")
+        if not frag_path.exists():
+            raise FileNotFoundError(f"No existe shader: {frag_path}")
+
+        vs = _compile_shader(GL_VERTEX_SHADER, _read_text(vert_path))
+        fs = _compile_shader(GL_FRAGMENT_SHADER, _read_text(frag_path))
+        self.program = _link_program(vs, fs)
+
+        # shaders ya linkeados: los borramos
+        glDeleteShader(vs)
+        glDeleteShader(fs)
+
+        # uniforms
+        self.uResolution = glGetUniformLocation(self.program, "uResolution")
+        self.uColor = glGetUniformLocation(self.program, "uColor")
+        self.uTexture = glGetUniformLocation(self.program, "uTexture")
+
+        # VAO/VBO
+        self.vao = glGenVertexArrays(1)
+        self.vbo = glGenBuffers(1)
+
+        glBindVertexArray(self.vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+
+        # 6 vertices * 4 floats (x,y,u,v) * 4 bytes
+        glBufferData(GL_ARRAY_BUFFER, 6 * 4 * 4, None, GL_DYNAMIC_DRAW)
+
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(
+            0, 4, GL_FLOAT, GL_FALSE, 4 * 4, ctypes.c_void_p(0)
+        )
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
+
+    def destroy(self) -> None:
+        try:
+            if getattr(self, "vbo", 0):
+                glDeleteBuffers(1, [self.vbo])
+            if getattr(self, "vao", 0):
+                glDeleteVertexArrays(1, [self.vao])
+            if getattr(self, "program", 0):
+                glDeleteProgram(self.program)
+        except Exception:
+            pass
+
+    def draw_text(
+        self,
+        font,
+        text: str,
+        x: float,
+        y: float,
+        size_px: float,
+        color: Tuple[float, float, float, float],
+        resolution: Tuple[int, int],
+        letter_spacing_px: float = 0.0,
+    ) -> None:
+        """
+        Dibuja texto en coordenadas de pixeles.
+        - (x,y) es el "baseline" (como en el video).
+        """
+
+        # blending típico para texto
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        glUseProgram(self.program)
+
+        # uniforms
+        glUniform2f(self.uResolution, float(resolution[0]), float(resolution[1]))
+        glUniform4f(self.uColor, float(color[0]), float(color[1]), float(color[2]), float(color[3]))
+
+        glActiveTexture(GL_TEXTURE0)
+        glUniform1i(self.uTexture, 0)
+
+        glBindVertexArray(self.vao)
+
+        scale = float(size_px) / float(font.pixel_size)
+
+        pen_x = float(x)
+        for ch in text:
+            glyph = font.get_glyph(ch)
+            if glyph is None:
+                # fallback simple si falta glyph
+                pen_x += size_px * 0.33
+                continue
+
+            # layout como tutorial
+            xpos = pen_x + glyph.bearing_x * scale
+            ypos = float(y) - (glyph.h - glyph.bearing_y) * scale
+
+            w = glyph.w * scale
+            h = glyph.h * scale
+
+            # 2 triángulos
+            vertices = np.array([
+                [xpos,     ypos + h,  0.0, 0.0],
+                [xpos,     ypos,      0.0, 1.0],
+                [xpos + w, ypos,      1.0, 1.0],
+
+                [xpos,     ypos + h,  0.0, 0.0],
+                [xpos + w, ypos,      1.0, 1.0],
+                [xpos + w, ypos + h,  1.0, 0.0],
+            ], dtype=np.float32)
+
+            glBindTexture(GL_TEXTURE_2D, int(glyph.tex_id))
+
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+            glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.nbytes, vertices)
+
+            glDrawArrays(GL_TRIANGLES, 0, 6)
+
+            pen_x += (glyph.advance_px * scale) + float(letter_spacing_px)
+
+        glBindVertexArray(0)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        glUseProgram(0)
+================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\fonts\segoeui\trading_atlas.json
 ================================================================================
 {"atlas":{"type":"msdf","distanceRange":2,"distanceRangeMiddle":0,"size":48,"width":296,"height":296,"yOrigin":"bottom"},"metrics":{"emSize":1,"lineHeight":1.330078125,"ascender":1.0791015625,"descender":-0.2509765625,"underlineY":-0.11572265625,"underlineThickness":0.05810546875},"glyphs":[{"unicode":32,"advance":0.27392578125},{"unicode":33,"advance":0.2841796875,"planeBounds":{"left":0.058756510416666678,"bottom":-0.03125,"right":0.22542317708333331,"top":0.73958333333333337},"atlasBounds":{"left":29.5,"bottom":126.5,"right":37.5,"top":163.5}},{"unicode":34,"advance":0.39208984375,"planeBounds":{"left":0.05021158854166665,"bottom":0.44791666666666669,"right":0.34187825520833331,"top":0.73958333333333326},"atlasBounds":{"left":26.5,"bottom":5.5,"right":40.5,"top":19.5}},{"unicode":35,"advance":0.5908203125,"planeBounds":{"left":-0.0093587239583332957,"bottom":0.03125,"right":0.59480794270833326,"top":0.73958333333333337},"atlasBounds":{"left":77.5,"bottom":52.5,"right":106.5,"top":86.5}},{"unicode":36,"advance":0.5390625,"planeBounds":{"left":0.048909505208333336,"bottom":-0.13541666666666669,"right":0.50724283854166663,"top":0.82291666666666663},"atlasBounds":{"left":24.5,"bottom":249.5,"right":46.5,"top":295.5}},{"unicode":37,"advance":0.818359375,"planeBounds":{"left":0.014322916666666668,"bottom":-0.052083333333333336,"right":0.80598958333333326,"top":0.73958333333333326},"atlasBounds":{"left":175.5,"bottom":205.5,"right":213.5,"top":243.5}},{"unicode":38,"advance":0.80029296875,"planeBounds":{"left":0.033772786458333336,"bottom":-0.052083333333333336,"right":0.80460611979166663,"top":0.73958333333333326},"atlasBounds":{"left":223.5,"bottom":205.5,"right":260.5,"top":243.5}},{"unicode":39,"advance":0.22998046875,"planeBounds":{"left":0.052490234375000007,"bottom":0.44791666666666669,"right":0.177490234375,"top":0.73958333333333326},"atlasBounds":{"left":287.5,"bottom":72.5,"right":293.5,"top":86.5}},{"unicode":40,"advance":0.3017578125,"planeBounds":{"left":0.044759114583333315,"bottom":-0.19791666666666669,"right":0.31559244791666663,"top":0.73958333333333326},"atlasBounds":{"left":47.5,"bottom":250.5,"right":60.5,"top":295.5}},{"unicode":41,"advance":0.3017578125,"planeBounds":{"left":-0.012369791666666683,"bottom":-0.19791666666666669,"right":0.25846354166666663,"top":0.73958333333333326},"atlasBounds":{"left":75.5,"bottom":250.5,"right":88.5,"top":295.5}},{"unicode":42,"advance":0.4169921875,"planeBounds":{"left":0.011067708333333334,"bottom":0.32291666666666669,"right":0.40690104166666669,"top":0.73958333333333326},"atlasBounds":{"left":264.5,"bottom":28.5,"right":283.5,"top":48.5}},{"unicode":43,"advance":0.68408203125,"planeBounds":{"left":0.082356770833333384,"bottom":0.03125,"right":0.60319010416666674,"top":0.55208333333333337},"atlasBounds":{"left":212.5,"bottom":23.5,"right":237.5,"top":48.5}},{"unicode":44,"advance":0.216796875,"planeBounds":{"left":-0.0070800781249999983,"bottom":-0.15625,"right":0.180419921875,"top":0.13541666666666666},"atlasBounds":{"left":282.5,"bottom":99.5,"right":291.5,"top":113.5}},{"unicode":45,"advance":0.39990234375,"planeBounds":{"left":0.047363281249999986,"bottom":0.21875,"right":0.35986328124999994,"top":0.34375},"atlasBounds":{"left":68.5,"bottom":13.5,"right":83.5,"top":19.5}},{"unicode":46,"advance":0.216796875,"planeBounds":{"left":0.026041666666666678,"bottom":-0.052083333333333336,"right":0.19270833333333331,"top":0.13541666666666666},"atlasBounds":{"left":282.5,"bottom":89.5,"right":290.5,"top":98.5}},{"unicode":47,"advance":0.3896484375,"planeBounds":{"left":-0.037516276041666664,"bottom":-0.15625,"right":0.42081705729166669,"top":0.73958333333333337},"atlasBounds":{"left":127.5,"bottom":252.5,"right":149.5,"top":295.5}},{"unicode":48,"advance":0.5390625,"planeBounds":{"left":0.02001953125,"bottom":-0.052083333333333336,"right":0.52001953125,"top":0.73958333333333326},"atlasBounds":{"left":26.5,"bottom":164.5,"right":50.5,"top":202.5}},{"unicode":49,"advance":0.5390625,"planeBounds":{"left":0.086588541666666657,"bottom":-0.03125,"right":0.37825520833333331,"top":0.73958333333333337},"atlasBounds":{"left":201.5,"bottom":126.5,"right":215.5,"top":163.5}},{"unicode":50,"advance":0.5390625,"planeBounds":{"left":0.029703776041666671,"bottom":-0.03125,"right":0.50887044270833337,"top":0.73958333333333337},"atlasBounds":{"left":240.5,"bottom":126.5,"right":263.5,"top":163.5}},{"unicode":51,"advance":0.5390625,"planeBounds":{"left":0.033528645833333336,"bottom":-0.052083333333333336,"right":0.49186197916666669,"top":0.73958333333333326},"atlasBounds":{"left":51.5,"bottom":164.5,"right":73.5,"top":202.5}},{"unicode":52,"advance":0.5390625,"planeBounds":{"left":-0.014973958333333296,"bottom":-0.03125,"right":0.52669270833333326,"top":0.73958333333333337},"atlasBounds":{"left":151.5,"bottom":87.5,"right":177.5,"top":124.5}},{"unicode":53,"advance":0.5390625,"planeBounds":{"left":0.057861328125,"bottom":-0.052083333333333336,"right":0.49536132812499994,"top":0.73958333333333326},"atlasBounds":{"left":74.5,"bottom":164.5,"right":95.5,"top":202.5}},{"unicode":54,"advance":0.5390625,"planeBounds":{"left":0.026611328125000007,"bottom":-0.052083333333333336,"right":0.526611328125,"top":0.73958333333333326},"atlasBounds":{"left":96.5,"bottom":164.5,"right":120.5,"top":202.5}},{"unicode":55,"advance":0.5390625,"planeBounds":{"left":0.0205078125,"bottom":-0.03125,"right":0.5205078125,"top":0.73958333333333337},"atlasBounds":{"left":271.5,"bottom":165.5,"right":295.5,"top":202.5}},{"unicode":56,"advance":0.5390625,"planeBounds":{"left":0.02099609375,"bottom":-0.052083333333333336,"right":0.52099609375,"top":0.73958333333333326},"atlasBounds":{"left":121.5,"bottom":164.5,"right":145.5,"top":202.5}},{"unicode":57,"advance":0.5390625,"planeBounds":{"left":0.01806640625,"bottom":-0.052083333333333336,"right":0.51806640625,"top":0.73958333333333326},"atlasBounds":{"left":146.5,"bottom":164.5,"right":170.5,"top":202.5}},{"unicode":58,"advance":0.216796875,"planeBounds":{"left":0.026041666666666678,"bottom":-0.052083333333333336,"right":0.19270833333333331,"top":0.55208333333333326},"atlasBounds":{"left":137.5,"bottom":57.5,"right":145.5,"top":86.5}},{"unicode":59,"advance":0.216796875,"planeBounds":{"left":-0.012125651041666666,"bottom":-0.15625,"right":0.19620768229166666,"top":0.55208333333333337},"atlasBounds":{"left":107.5,"bottom":52.5,"right":117.5,"top":86.5}},{"unicode":60,"advance":0.68408203125,"planeBounds":{"left":0.10319010416666667,"bottom":0.03125,"right":0.58235677083333326,"top":0.57291666666666663},"atlasBounds":{"left":188.5,"bottom":22.5,"right":211.5,"top":48.5}},{"unicode":61,"advance":0.68408203125,"planeBounds":{"left":0.082356770833333384,"bottom":0.11458333333333334,"right":0.60319010416666674,"top":0.46875},"atlasBounds":{"left":0.5,"bottom":2.5,"right":25.5,"top":19.5}},{"unicode":62,"advance":0.68408203125,"planeBounds":{"left":0.10319010416666667,"bottom":0.03125,"right":0.58235677083333326,"top":0.57291666666666663},"atlasBounds":{"left":164.5,"bottom":22.5,"right":187.5,"top":48.5}},{"unicode":63,"advance":0.4482421875,"planeBounds":{"left":0.033528645833333336,"bottom":-0.03125,"right":0.42936197916666669,"top":0.73958333333333337},"atlasBounds":{"left":0.5,"bottom":49.5,"right":19.5,"top":86.5}},{"unicode":64,"advance":0.955078125,"planeBounds":{"left":0.061848958333333336,"bottom":-0.11458333333333333,"right":0.89518229166666663,"top":0.73958333333333326},"atlasBounds":{"left":211.5,"bottom":254.5,"right":251.5,"top":295.5}},{"unicode":65,"advance":0.64501953125,"planeBounds":{"left":-0.011067708333333296,"bottom":-0.03125,"right":0.65559895833333326,"top":0.73958333333333337},"atlasBounds":{"left":20.5,"bottom":49.5,"right":52.5,"top":86.5}},{"unicode":66,"advance":0.5732421875,"planeBounds":{"left":0.067789713541666671,"bottom":-0.03125,"right":0.54695638020833337,"top":0.73958333333333337},"atlasBounds":{"left":53.5,"bottom":49.5,"right":76.5,"top":86.5}},{"unicode":67,"advance":0.619140625,"planeBounds":{"left":0.015462239583333372,"bottom":-0.052083333333333336,"right":0.59879557291666674,"top":0.73958333333333326},"atlasBounds":{"left":171.5,"bottom":164.5,"right":199.5,"top":202.5}},{"unicode":68,"advance":0.701171875,"planeBounds":{"left":0.061035156250000035,"bottom":-0.03125,"right":0.68603515625,"top":0.73958333333333337},"atlasBounds":{"left":220.5,"bottom":87.5,"right":250.5,"top":124.5}},{"unicode":69,"advance":0.505859375,"planeBounds":{"left":0.069010416666666671,"bottom":-0.03125,"right":0.48567708333333331,"top":0.73958333333333337},"atlasBounds":{"left":199.5,"bottom":87.5,"right":219.5,"top":124.5}},{"unicode":70,"advance":0.48828125,"planeBounds":{"left":0.061197916666666664,"bottom":-0.03125,"right":0.47786458333333331,"top":0.73958333333333337},"atlasBounds":{"left":178.5,"bottom":87.5,"right":198.5,"top":124.5}},{"unicode":71,"advance":0.68603515625,"planeBounds":{"left":0.018066406250000035,"bottom":-0.052083333333333336,"right":0.64306640625,"top":0.73958333333333326},"atlasBounds":{"left":200.5,"bottom":164.5,"right":230.5,"top":202.5}},{"unicode":72,"advance":0.7099609375,"planeBounds":{"left":0.063313802083333384,"bottom":-0.03125,"right":0.64664713541666674,"top":0.73958333333333337},"atlasBounds":{"left":122.5,"bottom":87.5,"right":150.5,"top":124.5}},{"unicode":73,"advance":0.26611328125,"planeBounds":{"left":0.0703125,"bottom":-0.03125,"right":0.1953125,"top":0.73958333333333337},"atlasBounds":{"left":115.5,"bottom":87.5,"right":121.5,"top":124.5}},{"unicode":74,"advance":0.35693359375,"planeBounds":{"left":-0.015869140625000021,"bottom":-0.052083333333333336,"right":0.29663085937499994,"top":0.73958333333333326},"atlasBounds":{"left":231.5,"bottom":164.5,"right":246.5,"top":202.5}},{"unicode":75,"advance":0.580078125,"planeBounds":{"left":0.064615885416666713,"bottom":-0.03125,"right":0.60628255208333326,"top":0.73958333333333337},"atlasBounds":{"left":59.5,"bottom":87.5,"right":85.5,"top":124.5}},{"unicode":76,"advance":0.470703125,"planeBounds":{"left":0.065104166666666671,"bottom":-0.03125,"right":0.48177083333333331,"top":0.73958333333333337},"atlasBounds":{"left":38.5,"bottom":87.5,"right":58.5,"top":124.5}},{"unicode":77,"advance":0.89794921875,"planeBounds":{"left":0.063313802083333343,"bottom":-0.03125,"right":0.83414713541666663,"top":0.73958333333333337},"atlasBounds":{"left":0.5,"bottom":87.5,"right":37.5,"top":124.5}},{"unicode":78,"advance":0.748046875,"planeBounds":{"left":0.061523437500000035,"bottom":-0.03125,"right":0.6865234375,"top":0.73958333333333337},"atlasBounds":{"left":264.5,"bottom":126.5,"right":294.5,"top":163.5}},{"unicode":79,"advance":0.75390625,"planeBounds":{"left":0.022786458333333336,"bottom":-0.052083333333333336,"right":0.73111979166666663,"top":0.73958333333333326},"atlasBounds":{"left":261.5,"bottom":205.5,"right":295.5,"top":243.5}},{"unicode":80,"advance":0.56005859375,"planeBounds":{"left":0.066324869791666671,"bottom":-0.03125,"right":0.54549153645833337,"top":0.73958333333333337},"atlasBounds":{"left":216.5,"bottom":126.5,"right":239.5,"top":163.5}},{"unicode":81,"advance":0.75390625,"planeBounds":{"left":0.021565755208333336,"bottom":-0.13541666666666669,"right":0.79239908854166663,"top":0.73958333333333326},"atlasBounds":{"left":173.5,"bottom":253.5,"right":210.5,"top":295.5}},{"unicode":82,"advance":0.59814453125,"planeBounds":{"left":0.061523437500000035,"bottom":-0.03125,"right":0.6240234375,"top":0.73958333333333337},"atlasBounds":{"left":173.5,"bottom":126.5,"right":200.5,"top":163.5}},{"unicode":83,"advance":0.53125,"planeBounds":{"left":0.031656901041666671,"bottom":-0.052083333333333336,"right":0.51082356770833337,"top":0.73958333333333326},"atlasBounds":{"left":247.5,"bottom":164.5,"right":270.5,"top":202.5}},{"unicode":84,"advance":0.52392578125,"planeBounds":{"left":-0.0078938802083332957,"bottom":-0.03125,"right":0.53377278645833326,"top":0.73958333333333337},"atlasBounds":{"left":117.5,"bottom":126.5,"right":143.5,"top":163.5}},{"unicode":85,"advance":0.68701171875,"planeBounds":{"left":0.051839192708333377,"bottom":-0.052083333333333336,"right":0.63517252604166674,"top":0.73958333333333326},"atlasBounds":{"left":0.5,"bottom":125.5,"right":28.5,"top":163.5}},{"unicode":86,"advance":0.62109375,"planeBounds":{"left":-0.012369791666666628,"bottom":-0.03125,"right":0.63346354166666674,"top":0.73958333333333337},"atlasBounds":{"left":38.5,"bottom":126.5,"right":69.5,"top":163.5}},{"unicode":87,"advance":0.93408203125,"planeBounds":{"left":-0.011881510416666666,"bottom":-0.03125,"right":0.94645182291666663,"top":0.73958333333333337},"atlasBounds":{"left":70.5,"bottom":126.5,"right":116.5,"top":163.5}},{"unicode":88,"advance":0.58984375,"planeBounds":{"left":-0.018554687499999965,"bottom":-0.03125,"right":0.6064453125,"top":0.73958333333333337},"atlasBounds":{"left":251.5,"bottom":87.5,"right":281.5,"top":124.5}},{"unicode":89,"advance":0.552734375,"planeBounds":{"left":-0.013834635416666628,"bottom":-0.03125,"right":0.56949869791666674,"top":0.73958333333333337},"atlasBounds":{"left":144.5,"bottom":126.5,"right":172.5,"top":163.5}},{"unicode":90,"advance":0.5703125,"planeBounds":{"left":-0.0091959635416666279,"bottom":-0.03125,"right":0.57413736979166674,"top":0.73958333333333337},"atlasBounds":{"left":86.5,"bottom":87.5,"right":114.5,"top":124.5}},{"unicode":91,"advance":0.3017578125,"planeBounds":{"left":0.072916666666666657,"bottom":-0.19791666666666669,"right":0.30208333333333331,"top":0.73958333333333326},"atlasBounds":{"left":89.5,"bottom":250.5,"right":100.5,"top":295.5}},{"unicode":92,"advance":0.37890625,"planeBounds":{"left":-0.040690104166666664,"bottom":-0.15625,"right":0.41764322916666669,"top":0.73958333333333337},"atlasBounds":{"left":150.5,"bottom":252.5,"right":172.5,"top":295.5}},{"unicode":93,"advance":0.3017578125,"planeBounds":{"left":0.00089518229166666782,"bottom":-0.19791666666666669,"right":0.23006184895833331,"top":0.73958333333333326},"atlasBounds":{"left":101.5,"bottom":250.5,"right":112.5,"top":295.5}},{"unicode":94,"advance":0.68408203125,"planeBounds":{"left":0.082356770833333384,"bottom":0.28125,"right":0.60319010416666674,"top":0.73958333333333326},"atlasBounds":{"left":238.5,"bottom":26.5,"right":263.5,"top":48.5}},{"unicode":95,"advance":0.4150390625,"planeBounds":{"left":-0.021647135416666664,"bottom":-0.17708333333333334,"right":0.43668619791666669,"top":-0.052083333333333343},"atlasBounds":{"left":84.5,"bottom":13.5,"right":106.5,"top":19.5}},{"unicode":96,"advance":0.26806640625,"planeBounds":{"left":0.010009765625000002,"bottom":0.57291666666666663,"right":0.26000976562499994,"top":0.78125},"atlasBounds":{"left":282.5,"bottom":114.5,"right":294.5,"top":124.5}},{"unicode":97,"advance":0.5087890625,"planeBounds":{"left":0.022705078125,"bottom":-0.052083333333333336,"right":0.46020507812499994,"top":0.55208333333333326},"atlasBounds":{"left":219.5,"bottom":57.5,"right":240.5,"top":86.5}},{"unicode":98,"advance":0.587890625,"planeBounds":{"left":0.050618489583333377,"bottom":-0.052083333333333336,"right":0.57145182291666674,"top":0.78125},"atlasBounds":{"left":252.5,"bottom":255.5,"right":277.5,"top":295.5}},{"unicode":99,"advance":0.4619140625,"planeBounds":{"left":0.01611328125,"bottom":-0.052083333333333336,"right":0.45361328124999994,"top":0.55208333333333326},"atlasBounds":{"left":170.5,"bottom":57.5,"right":191.5,"top":86.5}},{"unicode":100,"advance":0.5888671875,"planeBounds":{"left":0.01692708333333337,"bottom":-0.052083333333333336,"right":0.53776041666666674,"top":0.78125},"atlasBounds":{"left":0.5,"bottom":203.5,"right":25.5,"top":243.5}},{"unicode":101,"advance":0.52294921875,"planeBounds":{"left":0.025309244791666668,"bottom":-0.052083333333333336,"right":0.50447591145833337,"top":0.55208333333333326},"atlasBounds":{"left":146.5,"bottom":57.5,"right":169.5,"top":86.5}},{"unicode":102,"advance":0.31298828125,"planeBounds":{"left":-8.1380208333332177e-05,"bottom":-0.03125,"right":0.35408528645833331,"top":0.78125},"atlasBounds":{"left":78.5,"bottom":204.5,"right":95.5,"top":243.5}},{"unicode":103,"advance":0.5888671875,"planeBounds":{"left":0.01692708333333337,"bottom":-0.26041666666666663,"right":0.53776041666666674,"top":0.55208333333333326},"atlasBounds":{"left":126.5,"bottom":204.5,"right":151.5,"top":243.5}},{"unicode":104,"advance":0.56591796875,"planeBounds":{"left":0.059407552083333336,"bottom":-0.03125,"right":0.51774088541666663,"top":0.78125},"atlasBounds":{"left":152.5,"bottom":204.5,"right":174.5,"top":243.5}},{"unicode":105,"advance":0.2421875,"planeBounds":{"left":0.039225260416666678,"bottom":-0.03125,"right":0.20589192708333331,"top":0.76041666666666663},"atlasBounds":{"left":214.5,"bottom":205.5,"right":222.5,"top":243.5}},{"unicode":106,"advance":0.2421875,"planeBounds":{"left":-0.12760416666666666,"bottom":-0.26041666666666663,"right":0.20572916666666669,"top":0.76041666666666674},"atlasBounds":{"left":7.5,"bottom":246.5,"right":23.5,"top":295.5}},{"unicode":107,"advance":0.4970703125,"planeBounds":{"left":0.059407552083333336,"bottom":-0.03125,"right":0.51774088541666663,"top":0.78125},"atlasBounds":{"left":103.5,"bottom":204.5,"right":125.5,"top":243.5}},{"unicode":108,"advance":0.2421875,"planeBounds":{"left":0.05859375,"bottom":-0.03125,"right":0.18359375,"top":0.78125},"atlasBounds":{"left":96.5,"bottom":204.5,"right":102.5,"top":243.5}},{"unicode":109,"advance":0.861328125,"planeBounds":{"left":0.050618489583333336,"bottom":-0.03125,"right":0.82145182291666663,"top":0.55208333333333337},"atlasBounds":{"left":0.5,"bottom":20.5,"right":37.5,"top":48.5}},{"unicode":110,"advance":0.56591796875,"planeBounds":{"left":0.059407552083333336,"bottom":-0.03125,"right":0.51774088541666663,"top":0.55208333333333337},"atlasBounds":{"left":264.5,"bottom":58.5,"right":286.5,"top":86.5}},{"unicode":111,"advance":0.5859375,"planeBounds":{"left":0.022135416666666706,"bottom":-0.052083333333333336,"right":0.56380208333333326,"top":0.55208333333333326},"atlasBounds":{"left":192.5,"bottom":57.5,"right":218.5,"top":86.5}},{"unicode":112,"advance":0.587890625,"planeBounds":{"left":0.050618489583333377,"bottom":-0.26041666666666663,"right":0.57145182291666674,"top":0.55208333333333326},"atlasBounds":{"left":26.5,"bottom":204.5,"right":51.5,"top":243.5}},{"unicode":113,"advance":0.5888671875,"planeBounds":{"left":0.01692708333333337,"bottom":-0.26041666666666663,"right":0.53776041666666674,"top":0.55208333333333326},"atlasBounds":{"left":52.5,"bottom":204.5,"right":77.5,"top":243.5}},{"unicode":114,"advance":0.34765625,"planeBounds":{"left":0.055175781249999986,"bottom":-0.03125,"right":0.36767578124999994,"top":0.53125},"atlasBounds":{"left":148.5,"bottom":21.5,"right":163.5,"top":48.5}},{"unicode":115,"advance":0.42431640625,"planeBounds":{"left":0.029052734375,"bottom":-0.052083333333333336,"right":0.40405273437499994,"top":0.55208333333333326},"atlasBounds":{"left":118.5,"bottom":57.5,"right":136.5,"top":86.5}},{"unicode":116,"advance":0.3388671875,"planeBounds":{"left":-0.010091145833333334,"bottom":-0.052083333333333336,"right":0.34407552083333331,"top":0.67708333333333326},"atlasBounds":{"left":278.5,"bottom":260.5,"right":295.5,"top":295.5}},{"unicode":117,"advance":0.56591796875,"planeBounds":{"left":0.048665364583333336,"bottom":-0.052083333333333336,"right":0.50699869791666663,"top":0.53125},"atlasBounds":{"left":241.5,"bottom":58.5,"right":263.5,"top":86.5}},{"unicode":118,"advance":0.47900390625,"planeBounds":{"left":-0.019938151041666664,"bottom":-0.03125,"right":0.50089518229166663,"top":0.53125},"atlasBounds":{"left":99.5,"bottom":21.5,"right":124.5,"top":48.5}},{"unicode":119,"advance":0.72265625,"planeBounds":{"left":-0.013671874999999998,"bottom":-0.03125,"right":0.736328125,"top":0.53125},"atlasBounds":{"left":38.5,"bottom":21.5,"right":74.5,"top":48.5}},{"unicode":120,"advance":0.458984375,"planeBounds":{"left":-0.010091145833333334,"bottom":-0.03125,"right":0.46907552083333331,"top":0.53125},"atlasBounds":{"left":75.5,"bottom":21.5,"right":98.5,"top":48.5}},{"unicode":121,"advance":0.48388671875,"planeBounds":{"left":-0.017496744791666664,"bottom":-0.26041666666666663,"right":0.50333658854166663,"top":0.53125},"atlasBounds":{"left":0.5,"bottom":164.5,"right":25.5,"top":202.5}},{"unicode":122,"advance":0.4521484375,"planeBounds":{"left":-0.0062662760416666661,"bottom":-0.03125,"right":0.45206705729166669,"top":0.53125},"atlasBounds":{"left":125.5,"bottom":21.5,"right":147.5,"top":48.5}},{"unicode":123,"advance":0.3017578125,"planeBounds":{"left":0.022542317708333315,"bottom":-0.19791666666666669,"right":0.29337565104166663,"top":0.73958333333333326},"atlasBounds":{"left":61.5,"bottom":250.5,"right":74.5,"top":295.5}},{"unicode":124,"advance":0.2392578125,"planeBounds":{"left":0.057617187500000007,"bottom":-0.26041666666666663,"right":0.1826171875,"top":0.80208333333333326},"atlasBounds":{"left":0.5,"bottom":244.5,"right":6.5,"top":295.5}},{"unicode":125,"advance":0.3017578125,"planeBounds":{"left":0.0096028645833333148,"bottom":-0.19791666666666669,"right":0.28043619791666663,"top":0.73958333333333326},"atlasBounds":{"left":113.5,"bottom":250.5,"right":126.5,"top":295.5}},{"unicode":126,"advance":0.68408203125,"planeBounds":{"left":0.071695963541666713,"bottom":0.17708333333333331,"right":0.61336263020833326,"top":0.40625},"atlasBounds":{"left":41.5,"bottom":8.5,"right":67.5,"top":19.5}}],"kerning":[{"unicode1":34,"unicode2":114,"advance":-0.02490234375},{"unicode1":34,"unicode2":115,"advance":-0.0322265625},{"unicode1":39,"unicode2":114,"advance":-0.02490234375},{"unicode1":39,"unicode2":115,"advance":-0.0322265625},{"unicode1":40,"unicode2":106,"advance":0.11376953125},{"unicode1":42,"unicode2":65,"advance":-0.0810546875},{"unicode1":42,"unicode2":74,"advance":-0.0751953125},{"unicode1":42,"unicode2":99,"advance":-0.0498046875},{"unicode1":42,"unicode2":100,"advance":-0.0498046875},{"unicode1":42,"unicode2":101,"advance":-0.0498046875},{"unicode1":42,"unicode2":103,"advance":-0.0498046875},{"unicode1":42,"unicode2":111,"advance":-0.0498046875},{"unicode1":42,"unicode2":113,"advance":-0.0498046875},{"unicode1":65,"unicode2":42,"advance":-0.06298828125},{"unicode1":65,"unicode2":44,"advance":0.033203125},{"unicode1":65,"unicode2":59,"advance":0.033203125},{"unicode1":65,"unicode2":67,"advance":-0.01318359375},{"unicode1":65,"unicode2":71,"advance":-0.01318359375},{"unicode1":65,"unicode2":74,"advance":0.0458984375},{"unicode1":65,"unicode2":79,"advance":-0.01318359375},{"unicode1":65,"unicode2":84,"advance":-0.07177734375},{"unicode1":65,"unicode2":85,"advance":-0.01318359375},{"unicode1":65,"unicode2":86,"advance":-0.05712890625},{"unicode1":65,"unicode2":87,"advance":-0.0361328125},{"unicode1":65,"unicode2":89,"advance":-0.076171875},{"unicode1":65,"unicode2":90,"advance":0.02880859375},{"unicode1":65,"unicode2":116,"advance":-0.01318359375},{"unicode1":65,"unicode2":118,"advance":-0.02099609375},{"unicode1":65,"unicode2":119,"advance":-0.01318359375},{"unicode1":65,"unicode2":121,"advance":-0.01806640625},{"unicode1":66,"unicode2":84,"advance":-0.044921875},{"unicode1":66,"unicode2":89,"advance":-0.0322265625},{"unicode1":67,"unicode2":63,"advance":0.0009765625},{"unicode1":67,"unicode2":67,"advance":-0.02685546875},{"unicode1":67,"unicode2":71,"advance":-0.02685546875},{"unicode1":67,"unicode2":79,"advance":-0.01318359375},{"unicode1":67,"unicode2":81,"advance":-0.02685546875},{"unicode1":68,"unicode2":44,"advance":-0.06298828125},{"unicode1":68,"unicode2":46,"advance":-0.06298828125},{"unicode1":68,"unicode2":65,"advance":-0.01611328125},{"unicode1":68,"unicode2":84,"advance":-0.044921875},{"unicode1":68,"unicode2":88,"advance":-0.02587890625},{"unicode1":68,"unicode2":90,"advance":-0.02392578125},{"unicode1":69,"unicode2":65,"advance":0.0048828125},{"unicode1":69,"unicode2":74,"advance":0.033203125},{"unicode1":69,"unicode2":84,"advance":0.001953125},{"unicode1":69,"unicode2":87,"advance":0.01416015625},{"unicode1":69,"unicode2":88,"advance":0.00390625},{"unicode1":70,"unicode2":44,"advance":-0.0751953125},{"unicode1":70,"unicode2":46,"advance":-0.0751953125},{"unicode1":70,"unicode2":65,"advance":-0.06494140625},{"unicode1":70,"unicode2":74,"advance":-0.0322265625},{"unicode1":70,"unicode2":83,"advance":-0.01318359375},{"unicode1":70,"unicode2":84,"advance":0.0068359375},{"unicode1":70,"unicode2":97,"advance":-0.037109375},{"unicode1":70,"unicode2":102,"advance":0.0048828125},{"unicode1":71,"unicode2":84,"advance":-0.02392578125},{"unicode1":71,"unicode2":86,"advance":-0.01318359375},{"unicode1":71,"unicode2":121,"advance":-0.01318359375},{"unicode1":74,"unicode2":44,"advance":-0.0498046875},{"unicode1":74,"unicode2":46,"advance":-0.0498046875},{"unicode1":74,"unicode2":65,"advance":-0.01806640625},{"unicode1":74,"unicode2":74,"advance":-0.0322265625},{"unicode1":74,"unicode2":97,"advance":-0.01318359375},{"unicode1":75,"unicode2":44,"advance":0.01904296875},{"unicode1":75,"unicode2":59,"advance":0.01904296875},{"unicode1":75,"unicode2":67,"advance":-0.0439453125},{"unicode1":75,"unicode2":71,"advance":-0.0439453125},{"unicode1":75,"unicode2":74,"advance":0.0439453125},{"unicode1":75,"unicode2":79,"advance":-0.0439453125},{"unicode1":75,"unicode2":81,"advance":-0.0439453125},{"unicode1":75,"unicode2":88,"advance":0.01806640625},{"unicode1":75,"unicode2":90,"advance":0.01904296875},{"unicode1":75,"unicode2":99,"advance":-0.01318359375},{"unicode1":75,"unicode2":100,"advance":-0.01318359375},{"unicode1":75,"unicode2":101,"advance":-0.01318359375},{"unicode1":75,"unicode2":103,"advance":-0.01318359375},{"unicode1":75,"unicode2":111,"advance":-0.01318359375},{"unicode1":75,"unicode2":113,"advance":-0.01318359375},{"unicode1":75,"unicode2":116,"advance":-0.02294921875},{"unicode1":75,"unicode2":118,"advance":-0.0361328125},{"unicode1":75,"unicode2":119,"advance":-0.02587890625},{"unicode1":75,"unicode2":121,"advance":-0.044921875},{"unicode1":76,"unicode2":42,"advance":-0.10107421875},{"unicode1":76,"unicode2":63,"advance":-0.0498046875},{"unicode1":76,"unicode2":65,"advance":0.02880859375},{"unicode1":76,"unicode2":67,"advance":-0.0322265625},{"unicode1":76,"unicode2":71,"advance":-0.0322265625},{"unicode1":76,"unicode2":74,"advance":0.048828125},{"unicode1":76,"unicode2":79,"advance":-0.0341796875},{"unicode1":76,"unicode2":81,"advance":-0.0341796875},{"unicode1":76,"unicode2":84,"advance":-0.05517578125},{"unicode1":76,"unicode2":85,"advance":-0.01416015625},{"unicode1":76,"unicode2":86,"advance":-0.05712890625},{"unicode1":76,"unicode2":87,"advance":-0.02392578125},{"unicode1":76,"unicode2":89,"advance":-0.06298828125},{"unicode1":76,"unicode2":90,"advance":0.02880859375},{"unicode1":76,"unicode2":116,"advance":-0.01318359375},{"unicode1":76,"unicode2":118,"advance":-0.0498046875},{"unicode1":76,"unicode2":119,"advance":-0.0322265625},{"unicode1":76,"unicode2":121,"advance":-0.037109375},{"unicode1":79,"unicode2":44,"advance":-0.044921875},{"unicode1":79,"unicode2":46,"advance":-0.044921875},{"unicode1":79,"unicode2":65,"advance":-0.01318359375},{"unicode1":79,"unicode2":74,"advance":-0.0048828125},{"unicode1":79,"unicode2":84,"advance":-0.044921875},{"unicode1":79,"unicode2":88,"advance":-0.01806640625},{"unicode1":79,"unicode2":89,"advance":-0.01220703125},{"unicode1":79,"unicode2":90,"advance":-0.02392578125},{"unicode1":80,"unicode2":44,"advance":-0.1591796875},{"unicode1":80,"unicode2":46,"advance":-0.1591796875},{"unicode1":80,"unicode2":65,"advance":-0.0771484375},{"unicode1":80,"unicode2":71,"advance":-0.0048828125},{"unicode1":80,"unicode2":74,"advance":-0.06298828125},{"unicode1":80,"unicode2":87,"advance":0.01904296875},{"unicode1":80,"unicode2":88,"advance":-0.02978515625},{"unicode1":80,"unicode2":97,"advance":-0.0322265625},{"unicode1":80,"unicode2":99,"advance":-0.037109375},{"unicode1":80,"unicode2":100,"advance":-0.037109375},{"unicode1":80,"unicode2":101,"advance":-0.037109375},{"unicode1":80,"unicode2":103,"advance":-0.037109375},{"unicode1":80,"unicode2":111,"advance":-0.037109375},{"unicode1":80,"unicode2":113,"advance":-0.0361328125},{"unicode1":81,"unicode2":44,"advance":-0.044921875},{"unicode1":81,"unicode2":46,"advance":-0.06298828125},{"unicode1":81,"unicode2":65,"advance":-0.01318359375},{"unicode1":81,"unicode2":84,"advance":-0.044921875},{"unicode1":81,"unicode2":88,"advance":-0.01806640625},{"unicode1":81,"unicode2":89,"advance":-0.0048828125},{"unicode1":81,"unicode2":90,"advance":-0.02392578125},{"unicode1":82,"unicode2":59,"advance":0.0400390625},{"unicode1":82,"unicode2":67,"advance":-0.01416015625},{"unicode1":82,"unicode2":71,"advance":-0.01416015625},{"unicode1":82,"unicode2":74,"advance":0.02783203125},{"unicode1":82,"unicode2":79,"advance":-0.009765625},{"unicode1":82,"unicode2":81,"advance":-0.009765625},{"unicode1":82,"unicode2":84,"advance":-0.02587890625},{"unicode1":82,"unicode2":89,"advance":-0.01904296875},{"unicode1":82,"unicode2":99,"advance":-0.02587890625},{"unicode1":82,"unicode2":100,"advance":-0.02587890625},{"unicode1":82,"unicode2":101,"advance":-0.02783203125},{"unicode1":82,"unicode2":103,"advance":-0.02783203125},{"unicode1":82,"unicode2":111,"advance":-0.02880859375},{"unicode1":82,"unicode2":113,"advance":-0.02587890625},{"unicode1":83,"unicode2":116,"advance":-0.0322265625},{"unicode1":83,"unicode2":118,"advance":-0.02392578125},{"unicode1":83,"unicode2":119,"advance":-0.01318359375},{"unicode1":83,"unicode2":121,"advance":-0.02294921875},{"unicode1":84,"unicode2":44,"advance":-0.06298828125},{"unicode1":84,"unicode2":46,"advance":-0.087890625},{"unicode1":84,"unicode2":58,"advance":-0.01123046875},{"unicode1":84,"unicode2":59,"advance":-0.01123046875},{"unicode1":84,"unicode2":65,"advance":-0.0751953125},{"unicode1":84,"unicode2":67,"advance":-0.044921875},{"unicode1":84,"unicode2":71,"advance":-0.044921875},{"unicode1":84,"unicode2":74,"advance":-0.05517578125},{"unicode1":84,"unicode2":79,"advance":-0.044921875},{"unicode1":84,"unicode2":81,"advance":-0.044921875},{"unicode1":84,"unicode2":84,"advance":0.01904296875},{"unicode1":84,"unicode2":86,"advance":0.02099609375},{"unicode1":84,"unicode2":87,"advance":0.01904296875},{"unicode1":84,"unicode2":88,"advance":-0.0029296875},{"unicode1":84,"unicode2":89,"advance":0.01416015625},{"unicode1":84,"unicode2":97,"advance":-0.10595703125},{"unicode1":84,"unicode2":99,"advance":-0.10302734375},{"unicode1":84,"unicode2":100,"advance":-0.10302734375},{"unicode1":84,"unicode2":101,"advance":-0.10302734375},{"unicode1":84,"unicode2":102,"advance":-0.046875},{"unicode1":84,"unicode2":103,"advance":-0.10302734375},{"unicode1":84,"unicode2":109,"advance":-0.0869140625},{"unicode1":84,"unicode2":110,"advance":-0.0869140625},{"unicode1":84,"unicode2":111,"advance":-0.10302734375},{"unicode1":84,"unicode2":112,"advance":-0.0869140625},{"unicode1":84,"unicode2":113,"advance":-0.10302734375},{"unicode1":84,"unicode2":114,"advance":-0.0869140625},{"unicode1":84,"unicode2":115,"advance":-0.0751953125},{"unicode1":84,"unicode2":117,"advance":-0.0869140625},{"unicode1":84,"unicode2":118,"advance":-0.0498046875},{"unicode1":84,"unicode2":119,"advance":-0.05517578125},{"unicode1":84,"unicode2":120,"advance":-0.087890625},{"unicode1":84,"unicode2":121,"advance":-0.05517578125},{"unicode1":84,"unicode2":122,"advance":-0.06298828125},{"unicode1":85,"unicode2":65,"advance":-0.02001953125},{"unicode1":86,"unicode2":44,"advance":-0.10009765625},{"unicode1":86,"unicode2":46,"advance":-0.11181640625},{"unicode1":86,"unicode2":65,"advance":-0.05712890625},{"unicode1":86,"unicode2":67,"advance":-0.02099609375},{"unicode1":86,"unicode2":71,"advance":-0.02099609375},{"unicode1":86,"unicode2":74,"advance":-0.0341796875},{"unicode1":86,"unicode2":79,"advance":-0.005859375},{"unicode1":86,"unicode2":81,"advance":-0.02099609375},{"unicode1":86,"unicode2":83,"advance":-0.01318359375},{"unicode1":86,"unicode2":84,"advance":0.01904296875},{"unicode1":86,"unicode2":97,"advance":-0.07177734375},{"unicode1":86,"unicode2":99,"advance":-0.06298828125},{"unicode1":86,"unicode2":100,"advance":-0.06298828125},{"unicode1":86,"unicode2":101,"advance":-0.06298828125},{"unicode1":86,"unicode2":103,"advance":-0.06298828125},{"unicode1":86,"unicode2":109,"advance":-0.037109375},{"unicode1":86,"unicode2":110,"advance":-0.037109375},{"unicode1":86,"unicode2":111,"advance":-0.06298828125},{"unicode1":86,"unicode2":112,"advance":-0.037109375},{"unicode1":86,"unicode2":113,"advance":-0.06298828125},{"unicode1":86,"unicode2":114,"advance":-0.037109375},{"unicode1":86,"unicode2":115,"advance":-0.0322265625},{"unicode1":86,"unicode2":117,"advance":-0.037109375},{"unicode1":87,"unicode2":44,"advance":-0.05712890625},{"unicode1":87,"unicode2":46,"advance":-0.06298828125},{"unicode1":87,"unicode2":65,"advance":-0.0361328125},{"unicode1":87,"unicode2":84,"advance":0.01904296875},{"unicode1":87,"unicode2":97,"advance":-0.037109375},{"unicode1":87,"unicode2":99,"advance":-0.02392578125},{"unicode1":87,"unicode2":100,"advance":-0.02392578125},{"unicode1":87,"unicode2":101,"advance":-0.02392578125},{"unicode1":87,"unicode2":103,"advance":-0.02392578125},{"unicode1":87,"unicode2":111,"advance":-0.02392578125},{"unicode1":87,"unicode2":113,"advance":-0.02392578125},{"unicode1":88,"unicode2":44,"advance":0.033203125},{"unicode1":88,"unicode2":46,"advance":0.02783203125},{"unicode1":88,"unicode2":59,"advance":0.0400390625},{"unicode1":88,"unicode2":67,"advance":-0.01123046875},{"unicode1":88,"unicode2":71,"advance":-0.01123046875},{"unicode1":88,"unicode2":74,"advance":0.046875},{"unicode1":88,"unicode2":79,"advance":-0.01123046875},{"unicode1":88,"unicode2":81,"advance":-0.01123046875},{"unicode1":88,"unicode2":84,"advance":0.01611328125},{"unicode1":89,"unicode2":44,"advance":-0.0859375},{"unicode1":89,"unicode2":46,"advance":-0.09521484375},{"unicode1":89,"unicode2":65,"advance":-0.0771484375},{"unicode1":89,"unicode2":67,"advance":-0.02197265625},{"unicode1":89,"unicode2":71,"advance":-0.02197265625},{"unicode1":89,"unicode2":74,"advance":-0.0322265625},{"unicode1":89,"unicode2":79,"advance":-0.02197265625},{"unicode1":89,"unicode2":81,"advance":-0.02197265625},{"unicode1":89,"unicode2":83,"advance":-0.01318359375},{"unicode1":89,"unicode2":84,"advance":0.01904296875},{"unicode1":89,"unicode2":97,"advance":-0.09716796875},{"unicode1":89,"unicode2":99,"advance":-0.087890625},{"unicode1":89,"unicode2":100,"advance":-0.087890625},{"unicode1":89,"unicode2":101,"advance":-0.087890625},{"unicode1":89,"unicode2":102,"advance":-0.01318359375},{"unicode1":89,"unicode2":103,"advance":-0.087890625},{"unicode1":89,"unicode2":109,"advance":-0.06884765625},{"unicode1":89,"unicode2":110,"advance":-0.06884765625},{"unicode1":89,"unicode2":111,"advance":-0.087890625},{"unicode1":89,"unicode2":112,"advance":-0.06884765625},{"unicode1":89,"unicode2":113,"advance":-0.087890625},{"unicode1":89,"unicode2":114,"advance":-0.06884765625},{"unicode1":89,"unicode2":115,"advance":-0.06494140625},{"unicode1":89,"unicode2":117,"advance":-0.06884765625},{"unicode1":90,"unicode2":74,"advance":0.0400390625},{"unicode1":90,"unicode2":84,"advance":0.01904296875},{"unicode1":90,"unicode2":121,"advance":-0.02587890625},{"unicode1":91,"unicode2":106,"advance":0.11376953125},{"unicode1":98,"unicode2":97,"advance":-0.01318359375},{"unicode1":98,"unicode2":102,"advance":-0.0048828125},{"unicode1":98,"unicode2":120,"advance":-0.01220703125},{"unicode1":99,"unicode2":74,"advance":0.0341796875},{"unicode1":99,"unicode2":84,"advance":-0.0498046875},{"unicode1":99,"unicode2":89,"advance":-0.037109375},{"unicode1":101,"unicode2":34,"advance":-0.05078125},{"unicode1":101,"unicode2":39,"advance":-0.05078125},{"unicode1":102,"unicode2":41,"advance":0.06884765625},{"unicode1":102,"unicode2":44,"advance":-0.06298828125},{"unicode1":102,"unicode2":45,"advance":-0.0498046875},{"unicode1":102,"unicode2":46,"advance":-0.06298828125},{"unicode1":102,"unicode2":58,"advance":0.0400390625},{"unicode1":102,"unicode2":59,"advance":0.0400390625},{"unicode1":102,"unicode2":63,"advance":0.0322265625},{"unicode1":102,"unicode2":93,"advance":0.06884765625},{"unicode1":102,"unicode2":98,"advance":0.0087890625},{"unicode1":102,"unicode2":104,"advance":0.0087890625},{"unicode1":102,"unicode2":116,"advance":0.01806640625},{"unicode1":102,"unicode2":118,"advance":0.01904296875},{"unicode1":102,"unicode2":119,"advance":0.01904296875},{"unicode1":102,"unicode2":120,"advance":0.0087890625},{"unicode1":102,"unicode2":121,"advance":0.01611328125},{"unicode1":102,"unicode2":125,"advance":0.0400390625},{"unicode1":103,"unicode2":106,"advance":0.02294921875},{"unicode1":106,"unicode2":106,"advance":0.01708984375},{"unicode1":107,"unicode2":44,"advance":0.0400390625},{"unicode1":107,"unicode2":45,"advance":-0.06787109375},{"unicode1":107,"unicode2":46,"advance":0.0400390625},{"unicode1":107,"unicode2":58,"advance":0.0400390625},{"unicode1":107,"unicode2":59,"advance":0.0400390625},{"unicode1":107,"unicode2":99,"advance":-0.02001953125},{"unicode1":107,"unicode2":100,"advance":-0.01318359375},{"unicode1":107,"unicode2":101,"advance":-0.02001953125},{"unicode1":107,"unicode2":103,"advance":-0.02001953125},{"unicode1":107,"unicode2":111,"advance":-0.02001953125},{"unicode1":107,"unicode2":113,"advance":-0.01318359375},{"unicode1":107,"unicode2":116,"advance":-0.0078125},{"unicode1":110,"unicode2":34,"advance":-0.05078125},{"unicode1":110,"unicode2":39,"advance":-0.05078125},{"unicode1":111,"unicode2":34,"advance":-0.07080078125},{"unicode1":111,"unicode2":39,"advance":-0.07080078125},{"unicode1":111,"unicode2":97,"advance":-0.01318359375},{"unicode1":111,"unicode2":102,"advance":-0.01806640625},{"unicode1":111,"unicode2":120,"advance":-0.01220703125},{"unicode1":112,"unicode2":97,"advance":-0.01318359375},{"unicode1":112,"unicode2":102,"advance":-0.01806640625},{"unicode1":112,"unicode2":120,"advance":-0.01220703125},{"unicode1":113,"unicode2":106,"advance":0.0498046875},{"unicode1":114,"unicode2":44,"advance":-0.0771484375},{"unicode1":114,"unicode2":45,"advance":-0.06298828125},{"unicode1":114,"unicode2":46,"advance":-0.0830078125},{"unicode1":114,"unicode2":58,"advance":0.0400390625},{"unicode1":114,"unicode2":59,"advance":0.0400390625},{"unicode1":114,"unicode2":99,"advance":-0.01318359375},{"unicode1":114,"unicode2":100,"advance":-0.01318359375},{"unicode1":114,"unicode2":101,"advance":-0.01318359375},{"unicode1":114,"unicode2":102,"advance":0.01904296875},{"unicode1":114,"unicode2":103,"advance":-0.01318359375},{"unicode1":114,"unicode2":109,"advance":-0.001953125},{"unicode1":114,"unicode2":110,"advance":-0.001953125},{"unicode1":114,"unicode2":111,"advance":-0.01318359375},{"unicode1":114,"unicode2":113,"advance":-0.01318359375},{"unicode1":114,"unicode2":115,"advance":0.0068359375},{"unicode1":114,"unicode2":116,"advance":0.02880859375},{"unicode1":114,"unicode2":118,"advance":0.0400390625},{"unicode1":114,"unicode2":119,"advance":0.0400390625},{"unicode1":114,"unicode2":120,"advance":0.02880859375},{"unicode1":114,"unicode2":121,"advance":0.0400390625},{"unicode1":114,"unicode2":122,"advance":0.01904296875},{"unicode1":116,"unicode2":45,"advance":-0.05517578125},{"unicode1":116,"unicode2":63,"advance":-0.02587890625},{"unicode1":116,"unicode2":99,"advance":-0.01318359375},{"unicode1":116,"unicode2":100,"advance":-0.01318359375},{"unicode1":116,"unicode2":101,"advance":-0.0078125},{"unicode1":116,"unicode2":103,"advance":-0.0078125},{"unicode1":116,"unicode2":111,"advance":-0.0078125},{"unicode1":116,"unicode2":113,"advance":-0.0078125},{"unicode1":116,"unicode2":120,"advance":0.01416015625},{"unicode1":117,"unicode2":34,"advance":-0.0322265625},{"unicode1":117,"unicode2":39,"advance":-0.0322265625},{"unicode1":118,"unicode2":44,"advance":-0.05712890625},{"unicode1":118,"unicode2":46,"advance":-0.06298828125},{"unicode1":118,"unicode2":97,"advance":-0.01806640625},{"unicode1":118,"unicode2":99,"advance":-0.005859375},{"unicode1":118,"unicode2":100,"advance":-0.0078125},{"unicode1":118,"unicode2":101,"advance":-0.005859375},{"unicode1":118,"unicode2":103,"advance":-0.005859375},{"unicode1":118,"unicode2":111,"advance":-0.005859375},{"unicode1":118,"unicode2":113,"advance":-0.0078125},{"unicode1":119,"unicode2":44,"advance":-0.0439453125},{"unicode1":119,"unicode2":46,"advance":-0.0498046875},{"unicode1":119,"unicode2":99,"advance":-0.0029296875},{"unicode1":119,"unicode2":100,"advance":-0.0048828125},{"unicode1":119,"unicode2":101,"advance":-0.0048828125},{"unicode1":119,"unicode2":103,"advance":-0.0029296875},{"unicode1":119,"unicode2":111,"advance":-0.0029296875},{"unicode1":119,"unicode2":113,"advance":-0.0048828125},{"unicode1":120,"unicode2":99,"advance":-0.0078125},{"unicode1":120,"unicode2":100,"advance":-0.0078125},{"unicode1":120,"unicode2":101,"advance":-0.0078125},{"unicode1":120,"unicode2":103,"advance":-0.0078125},{"unicode1":120,"unicode2":111,"advance":-0.0078125},{"unicode1":120,"unicode2":113,"advance":-0.0078125},{"unicode1":121,"unicode2":34,"advance":0.01416015625},{"unicode1":121,"unicode2":39,"advance":0.01416015625},{"unicode1":121,"unicode2":44,"advance":-0.0498046875},{"unicode1":121,"unicode2":46,"advance":-0.06201171875},{"unicode1":121,"unicode2":63,"advance":-0.037109375},{"unicode1":121,"unicode2":99,"advance":-0.0048828125},{"unicode1":121,"unicode2":100,"advance":-0.0048828125},{"unicode1":121,"unicode2":101,"advance":-0.0048828125},{"unicode1":121,"unicode2":102,"advance":0.001953125},{"unicode1":121,"unicode2":103,"advance":-0.0048828125},{"unicode1":121,"unicode2":111,"advance":-0.0048828125},{"unicode1":121,"unicode2":113,"advance":-0.0048828125},{"unicode1":121,"unicode2":116,"advance":0.0029296875},{"unicode1":123,"unicode2":106,"advance":0.09912109375}]}
@@ -2558,17 +3305,15 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\re
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Any, List
+from typing import Dict, Optional, Tuple
 
-# Tu Renderer2D actual (ajusta el import según tu árbol)
 from render.renderer import Renderer2D, Color
-
 
 Vec4 = Tuple[float, float, float, float]
 
 
 # -----------------------------
-# Style (reemplaza SevenSegStyle)
+# Style
 # -----------------------------
 @dataclass
 class MsdfTextStyle:
@@ -2576,42 +3321,42 @@ class MsdfTextStyle:
     color: Vec4 = (1, 1, 1, 1)
     bg_color: Optional[Vec4] = None
 
-    # “edge” y “smoothing” se usan en shader MSDF (tuning)
-    # edge: umbral del borde (normalmente ~0.5)
+    # parámetros del shader MSDF
     edge: float = 0.5
-    # smoothing: ancho del suavizado (depende de tamaño y atlas)
     smoothing: float = 0.08
 
-    # espaciado extra entre caracteres
+    # espaciado extra (en px)
     letter_spacing_px: float = 0.0
 
 
 # -----------------------------
-# Glyph + Font metrics
+# Glyph
 # -----------------------------
 @dataclass
 class MsdfGlyph:
-    # UVs en el atlas (0..1)
+    # UVs (0..1)
     u0: float
     v0: float
     u1: float
     v1: float
 
-    # tamaño del quad del glifo en px (a tamaño "base")
-    w: float
-    h: float
+    # --- MODO CORRECTO (EM units) ---
+    plane_left: Optional[float] = None
+    plane_right: Optional[float] = None
+    plane_top: Optional[float] = None
+    plane_bottom: Optional[float] = None
+    advance_em: Optional[float] = None
 
-    # offset desde el cursor baseline hacia el quad
-    xoff: float
-    yoff: float
-
-    # avance de cursor
-    xadv: float
+    # --- BACKCOMPAT (si ya venían en px “base”) ---
+    w: Optional[float] = None
+    h: Optional[float] = None
+    xoff: Optional[float] = None
+    yoff: Optional[float] = None
+    xadv: Optional[float] = None
 
 
 @dataclass
 class MsdfFontMetrics:
-    # lineHeight y baseline en unidades base del atlas/metrics
     line_height: float
     ascent: float
     descent: float
@@ -2619,103 +3364,252 @@ class MsdfFontMetrics:
 
 class MsdfFont:
     """
-    Reemplazo de SevenSegFont.
-    Carga atlas + glyph metrics (desde JSON) y dibuja con Renderer2D usando shader MSDF.
+    Fuente MSDF. Dibuja usando Renderer2D.begin_msdf_text / draw_textured_quad_px / end_msdf_text.
+
+    - Si glyphs tienen planeBounds + advance => EM units (correcto).
+      style.size_px significa “pixels per em”.
+    - Si glyphs tienen w/h/xoff/yoff/xadv => px a base_size_px (compat).
     """
 
-    def __init__(self, atlas_texture_id: int, glyphs: Dict[int, MsdfGlyph], metrics: MsdfFontMetrics, base_size_px: float):
+    def __init__(
+        self,
+        atlas_texture_id: int,
+        glyphs: Dict[int, MsdfGlyph],
+        metrics: MsdfFontMetrics,
+        base_size_px: float,
+    ):
         self.texture_id = int(atlas_texture_id)
         self.glyphs = glyphs
         self.metrics = metrics
-        self.base_size_px = float(base_size_px)  # el size para el que se generaron las métricas (ej 32 o 48)
+        self.base_size_px = float(base_size_px)
 
     # -------------------------
-    # API compatible con overlays
+    # Helpers
+    # -------------------------
+    def _glyph_is_em(self, g: MsdfGlyph) -> bool:
+        return (
+            g.plane_left is not None
+            and g.plane_right is not None
+            and g.plane_top is not None
+            and g.plane_bottom is not None
+            and g.advance_em is not None
+        )
+
+    # -------------------------
+    # API
     # -------------------------
     def measure_text(self, text: str, style: MsdfTextStyle) -> Tuple[float, float]:
-        s = max(1e-6, float(style.size_px) / self.base_size_px)
-        x = 0.0
-        max_h = self.metrics.line_height * s
+        size_px = max(1e-6, float(style.size_px))
 
+        # detectar modo por primer glyph existente
+        em_mode: Optional[bool] = None
         for ch in text:
-            cp = ord(ch)
-            g = self.glyphs.get(cp)
+            g = self.glyphs.get(ord(ch))
+            if g is not None:
+                em_mode = self._glyph_is_em(g)
+                break
+        if em_mode is None:
+            em_mode = True
+
+        # altura
+        if em_mode:
+            max_h = float(self.metrics.line_height) * size_px
+        else:
+            s = size_px / self.base_size_px
+            max_h = float(self.metrics.line_height) * s
+
+        # ancho
+        x = 0.0
+        for ch in text:
+            g = self.glyphs.get(ord(ch))
             if g is None:
-                # fallback: espacio si no existe
-                x += (self.base_size_px * 0.33) * s
+                x += (size_px * 0.33) + float(style.letter_spacing_px)
                 continue
-            x += (g.xadv * s) + float(style.letter_spacing_px)
+
+            if self._glyph_is_em(g):
+                x += float(g.advance_em) * size_px + float(style.letter_spacing_px)
+            else:
+                s = size_px / self.base_size_px
+                adv = float(g.xadv) if g.xadv is not None else (self.base_size_px * 0.33)
+                x += adv * s + float(style.letter_spacing_px)
 
         return float(x), float(max_h)
 
     def draw_text(self, r: Renderer2D, x: float, y: float, text: str, style: MsdfTextStyle) -> None:
-        """
-        Dibuja texto en (x,y) en coordenadas px.
-        Nota: (x,y) aquí lo tratamos como top-left del bloque de texto,
-        similar a tu SevenSegFont.
-        """
         x = float(x)
         y = float(y)
+        size_px = max(1e-6, float(style.size_px))
+        if size_px < 16.0:
+            x = float(int(x))
+            y = float(int(y))
 
         # fondo opcional
         if style.bg_color is not None:
             w, h = self.measure_text(text, style)
             r.draw_rect_px(x, y, w, h, Color(*style.bg_color))
 
-        s = max(1e-6, float(style.size_px) / self.base_size_px)
+        # detectar modo
+        em_mode: Optional[bool] = None
+        for ch in text:
+            g = self.glyphs.get(ord(ch))
+            if g is not None:
+                em_mode = self._glyph_is_em(g)
+                break
+        if em_mode is None:
+            em_mode = True
 
-        # baseline: si querés igualar tu comportamiento actual (top-left),
-        # calculamos baseline aproximado usando ascent.
-        baseline_y = y + (self.metrics.ascent * s)
+        # baseline (y es top-left del bloque)
+        if em_mode:
+            baseline_y = y + float(self.metrics.ascent) * size_px
+        else:
+            s = size_px / self.base_size_px
+            baseline_y = y + float(self.metrics.ascent) * s
 
         cursor_x = x
         col = Color(*style.color)
 
-        # Activar modo texto MSDF en renderer
-        # (esto es una API que agregaremos a Renderer2D: begin_msdf_text / end_msdf_text)
-        r.begin_msdf_text(texture_id=self.texture_id, edge=style.edge, smoothing=style.smoothing, color=col)
+        # si existe flush (para no mezclar pipeline)
+        if hasattr(r, "flush"):
+            r.flush()
+
+        r.begin_msdf_text(
+            texture_id=self.texture_id,
+            edge=float(style.edge),
+            smoothing=float(style.smoothing),
+            color=col,
+        )
 
         for ch in text:
-            cp = ord(ch)
-            g = self.glyphs.get(cp)
+            g = self.glyphs.get(ord(ch))
             if g is None:
-                cursor_x += (self.base_size_px * 0.33) * s
+                cursor_x += (size_px * 0.33) + float(style.letter_spacing_px)
                 continue
 
-            gw = g.w * s
-            gh = g.h * s
+            if self._glyph_is_em(g):
+                w = (float(g.plane_right) - float(g.plane_left)) * size_px
+                h = (float(g.plane_top) - float(g.plane_bottom)) * size_px
 
-            # posición del quad en pantalla
-            qx = cursor_x + (g.xoff * s)
-            qy = baseline_y + (g.yoff * s)  # yoff normalmente es negativo/relativo a baseline según exporter
+                xoff = float(g.plane_left) * size_px
+                yoff = -float(g.plane_top) * size_px
 
-            # draw textured quad con UVs
-            r.draw_textured_quad_px(
-                qx, qy,
-                gw, gh,
-                u0=g.u0, v0=g.v0, u1=g.u1, v1=g.v1
-            )
+                qx = cursor_x + xoff
+                qy = baseline_y + yoff
 
-            cursor_x += (g.xadv * s) + float(style.letter_spacing_px)
+                r.draw_textured_quad_px(qx, qy, w, h, g.u0, g.v0, g.u1, g.v1)
+                cursor_x += float(g.advance_em) * size_px + float(style.letter_spacing_px)
+
+            else:
+                s = size_px / self.base_size_px
+                gw = (float(g.w) if g.w is not None else 0.0) * s
+                gh = (float(g.h) if g.h is not None else 0.0) * s
+                xoff = (float(g.xoff) if g.xoff is not None else 0.0) * s
+                yoff = (float(g.yoff) if g.yoff is not None else 0.0) * s
+                adv = (float(g.xadv) if g.xadv is not None else (self.base_size_px * 0.33)) * s
+
+                qx = cursor_x + xoff
+                qy = baseline_y + yoff
+
+                r.draw_textured_quad_px(qx, qy, gw, gh, g.u0, g.v0, g.u1, g.v1)
+                cursor_x += adv + float(style.letter_spacing_px)
 
         r.end_msdf_text()
 
 
 # -----------------------------
-# Font Manager: elegir familia (sans/serif/...)
+# Font Manager
 # -----------------------------
 class MsdfFontManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self._fonts: Dict[str, MsdfFont] = {}
 
     def register(self, name: str, font: MsdfFont) -> None:
-        self._fonts[name] = font
+        self._fonts[str(name)] = font
 
     def get(self, name: str) -> MsdfFont:
-        if name not in self._fonts:
-            raise KeyError(f"MSDF font '{name}' not registered")
-        return self._fonts[name]
+        key = str(name)
+        if key not in self._fonts:
+            raise KeyError(f"MSDF font '{key}' not registered")
+        return self._fonts[key]
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\text\vector_bezier_font.py
+================================================================================
+import freetype
+from dataclasses import dataclass
+from typing import List, Tuple
 
+@dataclass
+class QuadBezier:
+    p0: Tuple[float, float]
+    p1: Tuple[float, float]
+    p2: Tuple[float, float]
+
+@dataclass
+class GlyphOutline:
+    beziers: List[QuadBezier]
+    advance_px: float
+    bbox_w: float
+    bbox_h: float
+
+class VectorBezierFont:
+    def __init__(self, path: str, pixel_size: int = 64):
+        self.face = freetype.Face(path)
+        self.face.set_pixel_sizes(0, pixel_size)
+
+    def load_glyph(self, char: str) -> GlyphOutline:
+        self.face.load_char(char, freetype.FT_LOAD_NO_BITMAP)
+        outline = self.face.glyph.outline
+
+        pts = [(float(x), float(y)) for (x, y) in outline.points]
+        tags = outline.tags
+        contours = outline.contours
+
+        if not pts:
+            adv = self.face.glyph.advance.x / 64.0
+            return GlyphOutline([], adv, 1.0, 1.0)
+
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        minx, maxx = min(xs), max(xs)
+        miny, maxy = min(ys), max(ys)
+        w = max(1.0, maxx - minx)
+        h = max(1.0, maxy - miny)
+
+        def norm(p):
+            # normalizamos a 0..1
+            return ((p[0] - minx) / w, (p[1] - miny) / h)
+
+        beziers: List[QuadBezier] = []
+
+        start = 0
+        for end in contours:
+            cpts = pts[start:end + 1]
+            ctags = tags[start:end + 1]
+            n = len(cpts)
+            if n == 0:
+                start = end + 1
+                continue
+
+            # Recorremos puntos y armamos pares on->off->on (cuadrática).
+            i = 0
+            while i < n:
+                p0 = cpts[i]
+                t0 = ctags[i] & 1  # on-curve?
+
+                p1 = cpts[(i + 1) % n]
+                t1 = ctags[(i + 1) % n] & 1
+
+                if t0 == 1 and t1 == 0:
+                    p2 = cpts[(i + 2) % n]
+                    # p2 debería ser on, si no lo es, igual lo dejamos (para debug)
+                    beziers.append(QuadBezier(norm(p0), norm(p1), norm(p2)))
+                    i += 2
+                else:
+                    i += 1
+
+            start = end + 1
+
+        advance_px = self.face.glyph.advance.x / 64.0
+        return GlyphOutline(beziers, advance_px, w, h)
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\texture.py
 ================================================================================
@@ -2771,6 +3665,261 @@ def load_texture_rgba(path: str | Path) -> Texture2D:
     return Texture2D(tex_id, w, h)
 
 ================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\render\vector_bezier_text.py
+================================================================================
+# render/vector_bezier_text.py
+from __future__ import annotations
+
+import ctypes
+from dataclasses import dataclass
+from typing import List
+
+import numpy as np
+from OpenGL.GL import (
+    GL_ARRAY_BUFFER, GL_DYNAMIC_DRAW, GL_FLOAT, GL_TRIANGLES,
+    glBindBuffer, glBufferData, glBufferSubData,
+    glBindVertexArray, glDrawArrays,
+    glEnableVertexAttribArray, glGenBuffers, glGenVertexArrays,
+    glVertexAttribPointer, glUseProgram, glGetUniformLocation,
+    glUniform2f, glUniform4f, glUniform1f, glUniform1i,
+    glUniform4fv,
+)
+
+from OpenGL.GL import GL_VERTEX_SHADER, GL_FRAGMENT_SHADER
+from pathlib import Path
+from render.gl_utils import compile_shader, link_program
+
+
+# ------------------------------------------------------------
+# Style
+# ------------------------------------------------------------
+
+@dataclass
+class VectorTextStyle:
+    size_px: float = 32.0
+    color: tuple[float, float, float, float] = (0.95, 0.95, 1.0, 1.0)
+    stroke_px: float = 2.4
+    aa_px: float = 1.2
+    letter_spacing_px: float = 2.0
+
+
+# ------------------------------------------------------------
+# Renderer
+# ------------------------------------------------------------
+
+class VectorBezierTextRenderer:
+
+    def __init__(self) -> None:
+        self._program = None
+        self._vao = None
+        self._vbo = None
+
+        # Uniform locations
+        self._uResolution = -1
+        self._uColor = -1
+        self._uGlyphPx = -1
+        self._uStrokePx = -1
+        self._uAAPx = -1
+        self._uCurveCount = -1
+        self._uCurvesA = -1
+        self._uCurvesB = -1
+
+        self._init_gl()
+
+    # ------------------------------------------------------------
+    # OpenGL init
+    # ------------------------------------------------------------
+
+    def _init_gl(self) -> None:
+
+        root = Path(__file__).resolve().parent
+        vpath = root / "shaders" / "bezier_text.vert"
+        fpath = root / "shaders" / "bezier_text.frag"
+
+        vert_src = vpath.read_text(encoding="utf-8")
+        frag_src = fpath.read_text(encoding="utf-8")
+
+        vs = compile_shader(GL_VERTEX_SHADER, vert_src)
+        fs = compile_shader(GL_FRAGMENT_SHADER, frag_src)
+
+        self._program = link_program(vs, fs)
+
+        # Quad buffer
+        self._vao = glGenVertexArrays(1)
+        self._vbo = glGenBuffers(1)
+
+        glBindVertexArray(self._vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
+
+        glBufferData(GL_ARRAY_BUFFER, 6 * 4 * 4, None, GL_DYNAMIC_DRAW)
+
+        stride = 4 * 4
+
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 2, GL_FLOAT, False, stride, ctypes.c_void_p(0))
+
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 2, GL_FLOAT, False, stride, ctypes.c_void_p(8))
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
+
+        # Uniforms
+        glUseProgram(self._program)
+
+        self._uResolution = glGetUniformLocation(self._program, "uResolution")
+        self._uColor = glGetUniformLocation(self._program, "uColor")
+        self._uGlyphPx = glGetUniformLocation(self._program, "uGlyphPx")
+        self._uStrokePx = glGetUniformLocation(self._program, "uStrokePx")
+        self._uAAPx = glGetUniformLocation(self._program, "uAAPx")
+        self._uCurveCount = glGetUniformLocation(self._program, "uCurveCount")
+        self._uCurvesA = glGetUniformLocation(self._program, "uCurvesA")
+        self._uCurvesB = glGetUniformLocation(self._program, "uCurvesB")
+
+        glUseProgram(0)
+
+    # ------------------------------------------------------------
+    # Draw glyph from TTF outline
+    # ------------------------------------------------------------
+
+    def draw_glyph_outline(
+        self,
+        x: float,
+        y: float,
+        outline,
+        *,
+        resolution: tuple[int, int],
+        style: VectorTextStyle,
+        size_px: float,
+    ) -> None:
+
+        curves = outline.beziers
+        count = min(len(curves), 64)
+
+        w = float(size_px)
+        h = float(size_px)
+
+        x0, y0 = float(x), float(y)
+        x1, y1 = x0 + w, y0 + h
+
+        verts = np.array([
+            [x0, y0, 0.0, 0.0],
+            [x1, y0, 1.0, 0.0],
+            [x1, y1, 1.0, 1.0],
+            [x0, y0, 0.0, 0.0],
+            [x1, y1, 1.0, 1.0],
+            [x0, y1, 0.0, 1.0],
+        ], dtype=np.float32)
+
+        glUseProgram(self._program)
+        glBindVertexArray(self._vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
+
+        glBufferSubData(GL_ARRAY_BUFFER, 0, verts.nbytes, verts)
+
+        glUniform2f(self._uResolution, float(resolution[0]), float(resolution[1]))
+        glUniform4f(self._uColor, *style.color)
+        glUniform2f(self._uGlyphPx, w, h)
+        glUniform1f(self._uStrokePx, style.stroke_px)
+        glUniform1f(self._uAAPx, style.aa_px)
+
+        glUniform1i(self._uCurveCount, count)
+
+        if count > 0:
+            arrA = np.zeros((64, 4), dtype=np.float32)
+            arrB = np.zeros((64, 4), dtype=np.float32)
+
+            for i in range(count):
+                bz = curves[i]
+                arrA[i] = (*bz.p0, *bz.p1)
+                arrB[i] = (*bz.p2, 0.0, 0.0)
+
+            glUniform4fv(self._uCurvesA, 64, arrA)
+            glUniform4fv(self._uCurvesB, 64, arrB)
+
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
+        glUseProgram(0)
+
+    # ------------------------------------------------------------
+    # Debug draw (points only)
+    # ------------------------------------------------------------
+
+    def debug_draw_outline(
+        self,
+        renderer,
+        glyph_outline,
+        x: float,
+        y: float,
+        scale: float = 0.2,
+    ):
+
+        for bez in glyph_outline.beziers:
+            for p in [bez.p0, bez.p1, bez.p2]:
+                px = x + p[0] * scale
+                py = y - p[1] * scale
+
+                renderer.draw_rect_px(
+                    px,
+                    py,
+                    4,
+                    4,
+                    color=(1.0, 0.2, 0.2, 1.0)
+                )
+
+    def draw_text_ttf(
+        self,
+        x: float,
+        y: float,
+        text: str,
+        *,
+        font,  # VectorBezierFont
+        resolution: tuple[int, int],
+        style: VectorTextStyle,
+    ) -> None:
+        if not text:
+            return
+
+        pen_x = float(x)
+        pen_y = float(y)
+
+        size = float(style.size_px)
+
+        for ch in text:
+            if ch == "\n":
+                pen_x = float(x)
+                pen_y += size * 1.2
+                continue
+
+            outline = font.load_glyph(ch)
+
+            # Dibuja el glyph dentro de un quad size_px x size_px
+            self.draw_glyph_outline(
+                x=pen_x,
+                y=pen_y,
+                outline=outline,
+                resolution=resolution,
+                style=style,
+                size_px=size,
+            )
+
+            # Avance en px (de FreeType) escalado al quad size
+            # (por ahora aproximamos: advance_px / pixel_size * size)
+            # Si tu VectorBezierFont guarda pixel_size, mejor aún.
+            adv_px = float(getattr(outline, "advance_px", 0.6 * size))
+            # Si outline.advance_px viene en px del face pixel_size,
+            # lo normalizamos a "size"
+            # Fallback simple: usa 0.6*size si algo sale raro.
+            step = 0.6 * size
+            if adv_px > 0.0:
+                # Esto asume que tu VectorBezierFont fue creado con pixel_size = 128 (ej)
+                # y que adv_px está en ese espacio. Ajusta si usas otro.
+                step = (adv_px / 128.0) * size
+
+            pen_x += step + float(style.letter_spacing_px)            
+================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\requirements.txt
 ================================================================================
 glfw>=2.6.5
@@ -2778,6 +3927,43 @@ PyOpenGL>=3.1.7
 PyOpenGL_accelerate>=3.1.7
 numpy>=1.26
 pillow>=12.1.1
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\SansSerifCollection.ttf
+================================================================================
+[No se pudo leer el archivo: 'utf-8' codec can't decode byte 0xa3 in position 16: invalid start byte]
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\times.ttf
+================================================================================
+[No se pudo leer el archivo: 'utf-8' codec can't decode byte 0x80 in position 11: invalid start byte]
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\timesbd.ttf
+================================================================================
+[No se pudo leer el archivo: 'utf-8' codec can't decode byte 0x80 in position 11: invalid start byte]
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\timesbi.ttf
+================================================================================
+[No se pudo leer el archivo: 'utf-8' codec can't decode byte 0xbb in position 16: invalid start byte]
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\timesi.ttf
+================================================================================
+[No se pudo leer el archivo: 'utf-8' codec can't decode byte 0xbb in position 16: invalid start byte]
+================================================================================
+FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\tools\list_ttc_faces.py
+================================================================================
+import freetype
+
+path = r"C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\times.ttf"
+
+face0 = freetype.Face(path, index=0)
+
+print("num_faces:", face0.num_faces)
+print("face 0 family:", face0.family_name, "style:", face0.style_name)
+
+for i in range(face0.num_faces):
+    f = freetype.Face(path, index=i)
+    print(i, "| family:", f.family_name, "| style:", f.style_name)
+
+    
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\trading\__init__.py
 ================================================================================

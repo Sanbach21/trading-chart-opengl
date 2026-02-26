@@ -180,6 +180,8 @@ class Renderer2D:
     # Frame API
     # -------------------------
     def begin_frame(self, width: int, height: int) -> None:
+        self.width = int(width)
+        self.height = int(height)
         self._width = max(1, int(width))
         self._height = max(1, int(height))
         self._line_verts.clear()
