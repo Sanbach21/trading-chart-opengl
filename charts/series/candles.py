@@ -12,8 +12,8 @@ import math
 
 @dataclass
 class CandleStyle:
-    up_color: Tuple[float, float, float, float] = (0.10, 0.80, 0.35, 1.0)
-    down_color: Tuple[float, float, float, float] = (0.90, 0.25, 0.25, 1.0)
+    up_color: Tuple[float, float, float, float] = (0.3,1.0,0.24,1.0)
+    down_color: Tuple[float, float, float, float] = (1.0, 0.10, 0.10, 1.0)
     wick_width_px: float = 1.0
     width_factor: float = 0.8  # Fracción del spacing para ancho (deja gap)
     min_width_px: float = 4.0  # Ancho mínimo para evitar finura excesiva

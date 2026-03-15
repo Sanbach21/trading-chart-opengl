@@ -29,6 +29,7 @@ from OpenGL.GL import (
 from app.input import InputState
 from render.renderer import Renderer2D, Color
 from render.texture import load_texture_rgba
+from render.msdf_text_grok import MSDFTextRenderer
 
 from charts.scales.time_scale import TimeScale
 from charts.scales.price_scale import PriceScale
@@ -84,7 +85,6 @@ class _OverlayRendererAdapter:
                 self._to_color(color),
             )
 
-    # --- MSDF pass-through (para MsdfFont.draw_text) ---
     def begin_msdf_text(self, texture_id: int, edge: float, smoothing: float, color=None, **_):
         self._r.begin_msdf_text(
             texture_id=int(texture_id),
@@ -132,6 +132,11 @@ class GLFWWindow:
         # Renderer
         # ----------------------------
         self.renderer = Renderer2D()
+
+        # ----------------------------
+        # MSDF renderer (se inicializa después del contexto GL)
+        # ----------------------------
+        self.msdf_text = None
 
         # ----------------------------
         # Chart config (layout + style) - Ninja-like base
@@ -234,23 +239,28 @@ class GLFWWindow:
         )
 
         # ----------------------------
-        # MSDF Font Manager
+        # MSDF Font Manager y otros fonts
         # ----------------------------
         self.msdf_fonts = MsdfFontManager()
-
-        # Fonts
         self.bitmap_font: BitmapFont | None = None
         self.vec_text: VectorBezierTextRenderer | None = None
         self.vec_style: VectorTextStyle | None = None
-
         self._vfont: VectorBezierFont | None = None
         self._glyph_A = None
 
-        # Debug
         self._debug_outline_points = True
 
+    def _init_msdf_renderer(self):
+        """Inicializa el renderizador MSDF una vez que el contexto GL esté activo"""
+        self.msdf_text = MSDFTextRenderer(
+            r"C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\assets\fonts\msdf\atlas.png",
+            r"C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\assets\fonts\msdf\atlas.json",
+            px_range=4.0  # o 5.0 si usaste -pxrange 5
+        )
+        print("[GLFWWindow] MSDFTextRenderer inicializado correctamente")
+
     # -------------------------------------------------
-    # MSDF init (después de renderer.init())
+    # MSDF init (para tus otros fonts MSDF existentes)
     # -------------------------------------------------
     def _init_msdf_fonts(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -321,7 +331,7 @@ class GLFWWindow:
             )
 
         font = MsdfFont(texture_id, glyphs, metrics, base_size_px=base_size_px)
-        self.msdf_fonts.register("segoeui", font)
+        self.msdf_fonts.register("SansSerifCollection", font)
 
         print(f"[MSDF] cargado segoeui: {len(glyphs)} glyphs | tex={texture_id} | base={base_size_px}px")
 
@@ -360,7 +370,16 @@ class GLFWWindow:
     def _on_scroll(self, window, xoff: float, yoff: float) -> None:
         self.input.mouse.scroll_y += float(yoff)
 
-    # -------------------------------------------------
+
+    def _init_msdf_renderer(self):
+        json_path = generate_msdf_atlas(r"C:\Windows\Fonts\times.ttf")
+        self.msdf_text = MSDFTextRenderer(
+            png_path,
+            json_path,
+            px_range=5.0
+        )
+        print("[GLFWWindow] MSDFTextRenderer inicializado con atlas generado")
+        # -------------------------------------------------
     # Init GLFW
     # -------------------------------------------------
     def _init_glfw(self) -> None:
@@ -406,22 +425,27 @@ class GLFWWindow:
         # Init renderer (ya con contexto)
         self.renderer.init()
 
+        # Inicializar MSDF renderer (contexto GL ya activo)
+        self._init_msdf_renderer()
+
         # Vector renderer (shader)
         self.vec_text = VectorBezierTextRenderer()
         self.vec_style = VectorTextStyle(
-            size_px=7.0,
-            aa_px=1.2,
-            letter_spacing_px=2.0,
-            color=(0.95, 0.95, 1.0, 1.0),
+            size_px=5.0,
+            aa_px=1.0,
+            stroke_px=0.0,
+            letter_spacing_px=10.0,
+            color=(0.8, 0.8, 0.8, 1.0),
+            render_mode="direct",
         )
 
-        # Init MSDF fonts
+        # Init MSDF fonts existentes
         self._init_msdf_fonts()
-        msdf_font = self.msdf_fonts.get("segoeui")
+        msdf_font = self.msdf_fonts.get("SansSerifCollection")
 
         # Init Bitmap font (tooltip)
         root = Path(__file__).resolve().parents[1]
-        ttf_path = root / "times.ttf"
+        ttf_path = root / "SansSerifCollection.ttf"
         self.bitmap_font = BitmapFont(str(ttf_path), pixel_size=12, face_index=0)
 
         # Assign fonts
@@ -473,23 +497,32 @@ class GLFWWindow:
             # ---- VECTOR: texto real desde TTF ----
             if self.vec_text is not None and self.vec_style is not None and self._vfont is not None:
                 self.vec_text.draw_text_ttf(
-                    x=10,
-                    y=10,
-                    text="HELLO JOB",
+                    x=20,
+                    y=250,
+                    text="HELLO JOB , Release Notes: 1.110.0  12.123  21.333  21.666",
                     font=self._vfont,
                     resolution=(self.width, self.height),
                     style=self.vec_style,
                 )
 
-            # Debug puntos (opcional)
-            # if self._debug_outline_points and self.vec_text is not None and self._glyph_A is not None:
-            #     self.vec_text.debug_draw_outline(
-            #         self.renderer,
-            #         self._glyph_A,
-            #         x=300,
-            #         y=400,
-            #         scale=0.15,
-            #     )
+            # Prueba MSDF Grok (dibujar texto pequeño y nítido)
+            if self.msdf_text is not None:
+                self.msdf_text.render(
+                    "¡Texto MSDF nítido! 8px prueba áéíóúñ 123456789",
+                    x=40.0,
+                    y=500.0,
+                    size_px=50.0,
+                    color=(1.0, 1.0, 0.8)
+                )
+
+                # Otro texto más grande para comparar
+                self.msdf_text.render(
+                    "ABC 123 TEST nitido 8px - SIN ACENTOS",
+                    x=40.0,
+                    y=500.0,
+                    size_px=8.0,
+                    color=(1.0, 1.0, 0.8)
+                )
 
             # overlays + axes
             self.overlay.draw(self.overlay_renderer)

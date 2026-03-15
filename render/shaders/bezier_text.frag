@@ -2,17 +2,15 @@
 in vec2 vUV;
 out vec4 FragColor;
 
-uniform vec4  uColor;      // RGBA
-uniform vec2  uGlyphPx;    // (w,h) del quad en pixeles
-uniform float uAAPx;       // suavizado AA en px
+uniform vec4  uColor;
+uniform vec2  uGlyphPx;
+uniform float uAAPx;
+uniform float uStrokePx;
 
 const int MAX_CURVES = 64;
 
-// A: p0.xy, p1.xy
 uniform vec4 uCurvesA[MAX_CURVES];
-// B: p2.xy
 uniform vec4 uCurvesB[MAX_CURVES];
-
 uniform int  uCurveCount;
 
 vec2 quad_bezier(vec2 p0, vec2 p1, vec2 p2, float t) {
@@ -30,16 +28,12 @@ float dist_to_segment(vec2 p, vec2 a, vec2 b) {
 }
 
 void main() {
-    // p en coords locales del glyph EN PIXELES (0..w, 0..h)
     vec2 p = vUV * uGlyphPx;
 
-    // 1) Distancia mínima al borde (aprox)
     float minD = 1e9;
-
-    // 2) Inside/outside por ray casting (paridad) usando segmentos del contorno aproximados
     bool inside = false;
 
-    const int SUBDIV = 16; // calidad (sube/baja)
+    const int SUBDIV = 16;
 
     for (int i = 0; i < uCurveCount; i++) {
         vec4 A = uCurvesA[i];
@@ -55,10 +49,8 @@ void main() {
             float t = float(s) / float(SUBDIV);
             vec2 cur = quad_bezier(p0, p1, p2, t);
 
-            // distancia al borde
             minD = min(minD, dist_to_segment(p, prev, cur));
 
-            // ray cast horizontal hacia +X: cruces con y = p.y
             float y0 = prev.y;
             float y1 = cur.y;
             bool cond = ((y0 > p.y) != (y1 > p.y));
@@ -71,13 +63,13 @@ void main() {
         }
     }
 
-    // AA alrededor del borde
     float aa = max(0.75, uAAPx);
-    float edge = 1.0 - smoothstep(0.0, aa, minD); // 1 cerca del borde, 0 lejos
 
-    float alpha = inside ? 1.0 : 0.0;
-    // Mezcla con borde suave (suaviza transición)
-    alpha = max(alpha, edge);
+    // distancia firmada aproximada
+    float signedDist = inside ? minD : -minD;
+
+    // >0 engrosa, <0 adelgaza
+    float alpha = smoothstep(-aa, aa, signedDist + uStrokePx);
 
     if (alpha <= 0.001) discard;
     FragColor = vec4(uColor.rgb, uColor.a * alpha);
