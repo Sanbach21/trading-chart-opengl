@@ -12,27 +12,33 @@ Rect = Tuple[float, float, float, float]
 class PriceAxisStyle:
     padding_px: float = 6.0
 
-    grid_major_color: Tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.35)
-    grid_minor_color: Tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.15)
+    grid_major_color: Tuple[float, float, float, float] = (0.42, 0.42, 0.42, 0.38)
+    grid_minor_color: Tuple[float, float, float, float] = (0.32, 0.32, 0.32, 0.22)
     grid_major_width: float = 1.0
     grid_minor_width: float = 1.0
 
     tick_major_len: float = 7.0
     tick_minor_len: float = 4.0
     tick_width: float = 1.0
-    tick_color: Tuple[float, float, float, float] = (0.60, 0.60, 0.60, 0.9)
+    tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
 
     decimals: int = 2
-    target_major_ticks: int = 8
-    minor_divisions: int = 4
-    label_minor: bool = False
-    min_label_gap_px: float = 10.0
+    target_major_ticks: int = 12
+    minor_divisions: int = 3
+    label_minor: bool = True
+    min_label_gap_px: float = 14.0
+
+    grid_every_n_minor_ticks: int = 3
+
+    label_color: Tuple[float, float, float, float] = (0.88, 0.88, 0.88, 1.0)
+    label_scale: float = 1.0
 
 
 class PriceAxisOverlay:
     def __init__(self, overlay, price_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.price_scale = price_scale
+        self.text_renderer = None
 
         self.style = PriceAxisStyle()
         if config:
@@ -62,7 +68,7 @@ class PriceAxisOverlay:
         else:
             majors = self.price_scale.get_ticks(target_count=self.style.target_major_ticks)
 
-        # Minor ticks
+        # 1) ticks menores
         for _, yy in minors:
             y = float(yy)
 
@@ -74,26 +80,14 @@ class PriceAxisOverlay:
                 x2 = ax + self.style.tick_minor_len
 
             r.draw_line_px(
-                x1,
-                y,
-                x2,
-                y,
+                x1, y, x2, y,
                 color=self.style.tick_color,
                 width=float(self.style.tick_width),
             )
 
-        # Major ticks + grid
+        # 2) ticks mayores
         for _, yy in majors:
             y = float(yy)
-
-            r.draw_line_px(
-                plot_x,
-                y,
-                plot_x + plot_w,
-                y,
-                color=self.style.grid_major_color,
-                width=float(self.style.grid_major_width),
-            )
 
             if side == "left":
                 x1 = ax + aw - self.style.tick_major_len
@@ -103,13 +97,82 @@ class PriceAxisOverlay:
                 x2 = ax + self.style.tick_major_len
 
             r.draw_line_px(
-                x1,
-                y,
-                x2,
-                y,
+                x1, y, x2, y,
                 color=self.style.tick_color,
                 width=float(self.style.tick_width),
             )
+
+        # 3) grid
+        every = max(1, int(self.style.grid_every_n_minor_ticks))
+
+        all_ticks = []
+        for price, y in majors:
+            all_ticks.append((float(price), float(y), True))
+        for price, y in minors:
+            all_ticks.append((float(price), float(y), False))
+
+        all_ticks.sort(key=lambda t: t[1])
+
+        for idx, (_, y, is_major) in enumerate(all_ticks):
+            if is_major or (idx % every == 0):
+                color = self.style.grid_major_color if is_major else self.style.grid_minor_color
+                width = self.style.grid_major_width if is_major else self.style.grid_minor_width
+
+                r.draw_line_px(
+                    plot_x,
+                    y,
+                    plot_x + plot_w,
+                    y,
+                    color=color,
+                    width=float(width),
+                )
+
+        # IMPORTANTE:
+        # flush del renderer batcheado antes del texto,
+        # para que el texto no quede tapado por el flush final del frame.
+        if self.text_renderer is not None:
+            r.flush()
+
+            last_label_y: Optional[float] = None
+
+            if self.style.label_minor:
+                normalized_items = [(price, yy) for price, yy, _ in all_ticks]
+            else:
+                normalized_items = majors
+
+            for price, yy in normalized_items:
+                y = float(yy)
+            
+
+                if last_label_y is not None and abs(y - last_label_y) < self.style.min_label_gap_px:
+                    continue
+
+                label = f"{price:.{self.style.decimals}f}"
+                text_w, text_h = self.text_renderer.measure_text(
+                    label,
+                    scale=self.style.label_scale,
+                )
+
+                # baseline aproximada
+                text_y = y + text_h * 0.35
+
+                if side == "left":
+                    text_x = ax + aw - self.style.padding_px - text_w
+                else:
+                    text_x = ax + self.style.tick_major_len + self.style.padding_px
+
+                text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
+                text_y = max(ay + text_h, min(text_y, ay + ah - 2.0))
+
+                self.text_renderer.render_text(
+                    label,
+                    text_x,
+                    text_y,
+                    scale=self.style.label_scale,
+                    color=self.style.label_color,
+                )
+
+                last_label_y = y
 
 
 @dataclass
@@ -127,11 +190,15 @@ class TimeAxisStyle:
     min_label_spacing_px: float = 90.0
     format_compact: bool = True
 
+    label_color: Tuple[float, float, float, float] = (0.88, 0.88, 0.88, 1.0)
+    label_scale: float = 1.0
+
 
 class TimeAxisOverlay:
     def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.time_scale = time_scale
+        self.text_renderer = None
 
         self.style = TimeAxisStyle()
         if config:
@@ -156,6 +223,8 @@ class TimeAxisOverlay:
         x1 = self.time_scale.index_to_x(min(vs + 1, ve))
         px_per_bar = max(1.0, abs(x1 - x0))
         step = max(1, int(self.style.min_label_spacing_px / px_per_bar))
+
+        text_items: List[Tuple[float, str]] = []
 
         for i in range(vs, ve + 1, step):
             if i >= len(self.time_scale._timestamps):
@@ -184,7 +253,33 @@ class TimeAxisOverlay:
                 width=float(self.style.tick_width),
             )
 
+            if self.text_renderer is not None:
+                text_items.append((x, self._format_time(self.time_scale._timestamps[i])))
+
+        if self.text_renderer is not None and text_items:
+            r.flush()
+
+            for x, label in text_items:
+                text_w, text_h = self.text_renderer.measure_text(
+                    label,
+                    scale=self.style.label_scale,
+                )
+
+                text_x = x - text_w * 0.5
+                text_y = ay + ah - 6.0
+
+                text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
+                text_y = max(ay + text_h, min(text_y, ay + ah - 2.0))
+
+                self.text_renderer.render_text(
+                    label,
+                    text_x,
+                    text_y,
+                    scale=self.style.label_scale,
+                    color=self.style.label_color,
+                )
+
     def _format_time(self, ts: datetime) -> str:
         if self.style.format_compact:
-            return ts.strftime("%I:%M %p").lstrip("0")
+            return ts.strftime("%H:%M")
         return ts.strftime("%Y-%m-%d %H:%M")

@@ -22,6 +22,7 @@ def _nice_step(raw_step: float) -> float:
     """Redondea a 1,2,5,10 * 10^exp."""
     if raw_step <= 0 or not _is_finite(raw_step):
         return 1.0
+
     exp = math.floor(math.log10(raw_step))
     f = raw_step / (10 ** exp)
 
@@ -54,7 +55,7 @@ class PriceScale:
         bottom_padding_px: float = 6.0,
         min_range: float = 1e-9,
     ) -> None:
-        # Viewport (PLOT)
+        # Viewport del plot
         self.view_x: float = 0.0
         self.view_y: float = 0.0
         self.view_w: float = 1.0
@@ -92,12 +93,15 @@ class PriceScale:
     def set_manual_range(self, low: float, high: float) -> None:
         lo = float(low)
         hi = float(high)
+
         if not (_is_finite(lo) and _is_finite(hi)):
             return
+
         if hi - lo < self._min_range:
             mid = 0.5 * (hi + lo)
             lo = mid - 0.5 * self._min_range
             hi = mid + 0.5 * self._min_range
+
         self._manual_range = PriceRange(lo, hi)
         self._range = self._manual_range
 
@@ -110,6 +114,7 @@ class PriceScale:
 
         lo = float(low)
         hi = float(high)
+
         if not (_is_finite(lo) and _is_finite(hi)):
             return
 
@@ -149,8 +154,10 @@ class PriceScale:
             h, l = get_high_low(i)
             h = float(h)
             l = float(l)
+
             if not (_is_finite(h) and _is_finite(l)):
                 continue
+
             if l < lo:
                 lo = l
             if h > hi:
@@ -178,8 +185,10 @@ class PriceScale:
         n = min(len(highs), len(lows))
         if n <= 0:
             return
+
         vs = _clamp(float(visible_start), 0, n - 1)
         ve = _clamp(float(visible_end), 0, n - 1)
+
         self.autoscale_from_provider(
             int(vs),
             int(ve),
@@ -199,7 +208,7 @@ class PriceScale:
         y1 = (self.view_y + self.view_h) - self.bottom_padding_px
         usable_h = max(1.0, y1 - y0)
 
-        t = (p - lo) / rng  # 0..1
+        t = (p - lo) / rng
 
         if self.y_down:
             return float(y1 - t * usable_h)
@@ -228,15 +237,19 @@ class PriceScale:
     # -------------------------
     def get_ticks(self, target_count: int = 8) -> List[Tuple[float, float]]:
         """
-        Backward compatible: solo major ticks como (price, y).
+        Devuelve solo major ticks como (price, y).
         """
         out = self.get_ticks_ex(target_major=target_count, minor_divisions=1)
         return out["major"]
 
     # -------------------------
-    # Ticks (Majors + Minors)  <-- Ninja-like
+    # Ticks (Majors + Minors)
     # -------------------------
-    def get_ticks_ex(self, target_major: int = 8, minor_divisions: int = 4) -> Dict[str, List[Tuple[float, float]]]:
+    def get_ticks_ex(
+        self,
+        target_major: int = 8,
+        minor_divisions: int = 4,
+    ) -> Dict[str, List[Tuple[float, float]]]:
         """
         Devuelve:
           {
@@ -264,15 +277,14 @@ class PriceScale:
         div = max(1, int(minor_divisions))
         minor_step = major_step / div
 
-        # iteramos en majors
         v = lo2
         max_iter = 1024
         it = 0
+
         while v <= hi2 + 1e-12 and it < max_iter:
             y = self.price_to_y(v)
             majors.append((float(v), float(y)))
 
-            # minors dentro del bloque (v + minor_step ... v + (div-1)*minor_step)
             if div > 1:
                 for k in range(1, div):
                     mv = v + k * minor_step

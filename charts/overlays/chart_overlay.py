@@ -54,10 +54,9 @@ class ChartOverlay:
             "separator_width": 1.0,
         },
         "colors": {
-            # Ninja-ish base palette
-            "bg": (0.12, 0.12, 0.12, 1.0),
-            "axis_band": (0.08, 0.08, 0.08, 1.0),      # banda eje
-            "axis_separator": (0.35, 0.35, 0.35, 0.85),
+        "bg": (0.08,0.08,0.08,1.0),
+        "axis_band": (0.08,0.08,0.08,1.0),
+        "axis_separator": (0.42, 0.42, 0.42, 0.95),
         },
         "draw": {
             "axis_bands": True,        # dibuja rectángulos de fondo de ejes
@@ -102,6 +101,7 @@ class ChartOverlay:
         - bandas de fondo de ejes (opcional)
         - separadores (líneas grises)
         """
+        
         layout = self.get_layout()
         colors = self.config["colors"]
         draw_cfg = self.config.get("draw", {})
