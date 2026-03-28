@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from render.renderer import Renderer2D, Color
 from app.input import InputState
-from charts.series.candles import CandleSeries
 from charts.overlays.chart_overlay import ChartOverlay
+from charts.series.candles import CandleSeries
+from render.renderer import Color, Renderer2D
 
 
 @dataclass
@@ -30,7 +30,7 @@ class CrosshairOverlay:
         self.style = style or CrosshairStyle()
 
         self.snap_enabled = True
-        self.snap_tolerance_px = 30.0
+        self.snap_tolerance_px = 40.0
 
     def draw(self, renderer: Renderer2D) -> None:
         layout = self.overlay.get_layout()
@@ -47,19 +47,24 @@ class CrosshairOverlay:
 
         col = Color(*self.style.color)
 
-        # Snap a la vela más cercana
         snap_x = mx
-        if self.snap_enabled:
+
+        if self.snap_enabled and len(self.series.data) > 0:
             vr = self.overlay.time_scale.get_visible_range()
             vs = max(0, int(vr.start_idx))
             ve = min(len(self.series.data) - 1, int(vr.end_idx))
 
             if ve >= vs:
                 closest_idx = None
-                min_dist = 1e18
+                min_dist = float("inf")
 
                 for i in range(vs, ve + 1):
                     cx = float(self.overlay.time_scale.index_to_x(i))
+
+                    # ignorar centros completamente fuera del área visible
+                    if cx < px - 100.0 or cx > px + pw + 100.0:
+                        continue
+
                     d = abs(cx - mx)
                     if d < min_dist:
                         min_dist = d
@@ -67,8 +72,8 @@ class CrosshairOverlay:
 
                 if closest_idx is not None and min_dist <= self.snap_tolerance_px:
                     snap_x = float(self.overlay.time_scale.index_to_x(closest_idx))
+                    snap_x = max(px, min(px + pw, snap_x))
 
-        # Líneas del crosshair
         renderer.draw_line_px(
             snap_x,
             py,

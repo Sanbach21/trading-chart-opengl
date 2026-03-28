@@ -1,4 +1,3 @@
-# charts/overlays/chart_overlay.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -42,26 +41,32 @@ class ChartOverlay:
 
     DEFAULT_CONFIG: Dict[str, Any] = {
         "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
+        "plot_padding": {
+            "left": 0,
+            "right": 8,   # pequeño aire visual interno antes del price axis
+            "top": 0,
+            "bottom": 0,
+        },
         "price_axis": {
             "show": True,
             "side": "right",
-            "width_px": 70,            # Ninja-like: angosto
-            "separator_width": 1.0,
+            "width_px": 70,
+            "separator_width": 1.5,
         },
         "time_axis": {
             "show": True,
-            "height_px": 28,           # Ninja-like: más compacto
-            "separator_width": 1.0,
+            "height_px": 28,
+            "separator_width": 1.5,
         },
         "colors": {
-        "bg": (0.08,0.08,0.08,1.0),
-        "axis_band": (0.08,0.08,0.08,1.0),
-        "axis_separator": (0.42, 0.42, 0.42, 0.95),
+            "bg": (0.12, 0.12, 0.12, 0.92),
+            "axis_band": (0.12, 0.12, 0.12, 0.92),
+            "axis_separator": (0.80, 0.80, 0.80, 0.95),
         },
         "draw": {
-            "axis_bands": True,        # dibuja rectángulos de fondo de ejes
+            "axis_bands": True,
         },
-        "coords": {"y_down": True},    # UI normal: y crece hacia abajo
+        "coords": {"y_down": True},
     }
 
     def __init__(self, time_scale, price_scale, config: Optional[Dict[str, Any]] = None) -> None:
@@ -73,9 +78,9 @@ class ChartOverlay:
         self._layout: Optional[OverlayLayout] = None
         self._y_down = bool(self.config["coords"].get("y_down", True))
 
-    # ----------------------------
+    # -------------------------------------------------
     # Public API
-    # ----------------------------
+    # -------------------------------------------------
     def set_view(self, x: float, y: float, w: float, h: float) -> None:
         self._x, self._y, self._w, self._h = float(x), float(y), float(w), float(h)
         self._layout = None
@@ -84,9 +89,9 @@ class ChartOverlay:
         if self._layout is None:
             self._layout = self._compute_layout()
 
-            # Conectar escalas al área de plot
             px, py, pw, ph = self._layout.plot_rect
             self.time_scale.set_view(px, pw)
+
             if hasattr(self.price_scale, "set_viewport"):
                 self.price_scale.set_viewport(px, py, pw, ph)
 
@@ -96,46 +101,38 @@ class ChartOverlay:
         return self.get_layout().plot_rect
 
     def draw(self, renderer) -> None:
-        """
-        Dibuja:
-        - bandas de fondo de ejes (opcional)
-        - separadores (líneas grises)
-        """
-        
         layout = self.get_layout()
         colors = self.config["colors"]
         draw_cfg = self.config.get("draw", {})
 
-        # bandas (fondo de axis)
         if draw_cfg.get("axis_bands", True):
             band = colors.get("axis_band", None)
             if band is not None:
-                # price axis band
                 if self.config["price_axis"]["show"]:
                     ax, ay, aw, ah = layout.price_axis_rect
                     if aw > 0 and ah > 0:
                         renderer.draw_rect_px(ax, ay, aw, ah, color=band)
 
-                # time axis band
                 if self.config["time_axis"]["show"]:
                     tx, ty, tw, th = layout.time_axis_rect
                     if tw > 0 and th > 0:
                         renderer.draw_rect_px(tx, ty, tw, th, color=band)
 
-        # separadores
         if self.config["price_axis"]["show"]:
             self._draw_price_axis_separator(renderer, layout.price_axis_rect, layout.plot_rect)
 
         if self.config["time_axis"]["show"]:
             self._draw_time_axis_separator(renderer, layout.time_axis_rect, layout.plot_rect)
 
-    # ----------------------------
+    # -------------------------------------------------
     # Layout calculation
-    # ----------------------------
+    # -------------------------------------------------
     def _compute_layout(self) -> OverlayLayout:
         pad = self.config["padding"]
-        left, right = float(pad["left"]), float(pad["right"])
-        top, bottom = float(pad["top"]), float(pad["bottom"])
+        left = float(pad["left"])
+        right = float(pad["right"])
+        top = float(pad["top"])
+        bottom = float(pad["bottom"])
 
         chart_rect: Rect = (self._x, self._y, self._w, self._h)
 
@@ -151,29 +148,63 @@ class ChartOverlay:
 
         pa = self.config["price_axis"]
         ta = self.config["time_axis"]
+        plot_pad = self.config.get("plot_padding", {})
+
         price_w = float(pa["width_px"]) if pa["show"] else 0.0
         time_h = float(ta["height_px"]) if ta["show"] else 0.0
 
+        plot_pad_left = float(plot_pad.get("left", 0.0))
+        plot_pad_right = float(plot_pad.get("right", 0.0))
+        plot_pad_top = float(plot_pad.get("top", 0.0))
+        plot_pad_bottom = float(plot_pad.get("bottom", 0.0))
+
         # time axis abajo
         if self._y_down:
-            plot_y = inner_y
-            plot_h = max(0.0, inner_h - time_h)
-            time_y = inner_y + plot_h
+            plot_y_raw = inner_y
+            plot_h_raw = max(0.0, inner_h - time_h)
+            time_y = inner_y + plot_h_raw
         else:
-            plot_h = max(0.0, inner_h - time_h)
-            plot_y = inner_y + time_h
+            plot_h_raw = max(0.0, inner_h - time_h)
+            plot_y_raw = inner_y + time_h
             time_y = inner_y
 
         time_rect: Rect = (inner_x, time_y, inner_w, time_h) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
 
         # price axis izquierda/derecha
         side = (pa["side"] or "right").lower()
+
         if side == "left":
-            price_rect: Rect = (inner_x, plot_y, price_w, plot_h)
-            plot_rect: Rect = (inner_x + price_w, plot_y, max(0.0, inner_w - price_w), plot_h)
+            price_rect_raw: Rect = (inner_x, plot_y_raw, price_w, plot_h_raw)
+            plot_rect_raw: Rect = (
+                inner_x + price_w,
+                plot_y_raw,
+                max(0.0, inner_w - price_w),
+                plot_h_raw,
+            )
         else:
-            plot_rect = (inner_x, plot_y, max(0.0, inner_w - price_w), plot_h)
-            price_rect = (inner_x + plot_rect[2], plot_y, price_w, plot_h) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
+            plot_rect_raw = (
+                inner_x,
+                plot_y_raw,
+                max(0.0, inner_w - price_w),
+                plot_h_raw,
+            )
+            price_rect_raw = (
+                inner_x + plot_rect_raw[2],
+                plot_y_raw,
+                price_w,
+                plot_h_raw,
+            ) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
+
+        # Aplicar padding interno solo al plot, no al eje
+        prx, pry, prw, prh = plot_rect_raw
+        plot_rect: Rect = (
+            prx + plot_pad_left,
+            pry + plot_pad_top,
+            max(0.0, prw - plot_pad_left - plot_pad_right),
+            max(0.0, prh - plot_pad_top - plot_pad_bottom),
+        )
+
+        price_rect = price_rect_raw
 
         return OverlayLayout(
             chart_rect=chart_rect,
@@ -182,11 +213,19 @@ class ChartOverlay:
             time_axis_rect=time_rect,
         )
 
-    # ----------------------------
+    # -------------------------------------------------
     # Drawing helpers
-    # ----------------------------
-    def _draw_line(self, renderer, x1: float, y1: float, x2: float, y2: float,
-                   width: float = 1.0, color: Any = None) -> None:
+    # -------------------------------------------------
+    def _draw_line(
+        self,
+        renderer,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        width: float = 1.0,
+        color: Any = None,
+    ) -> None:
         renderer.draw_line_px(x1, y1, x2, y2, color=color, width=width)
 
     def _draw_price_axis_separator(self, renderer, axis_rect: Rect, plot_rect: Rect) -> None:

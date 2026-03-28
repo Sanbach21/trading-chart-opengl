@@ -2,7 +2,7 @@ from app.window import GLFWWindow
 
 
 def main() -> None:
-    window = GLFWWindow()
+    window = GLFWWindow(live_mode=True)
     window.run()
 
 

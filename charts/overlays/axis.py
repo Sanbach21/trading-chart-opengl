@@ -26,12 +26,15 @@ class PriceAxisStyle:
     target_major_ticks: int = 12
     minor_divisions: int = 3
     label_minor: bool = True
-    min_label_gap_px: float = 14.0
+    min_label_gap_px: float = 5.0
 
     grid_every_n_minor_ticks: int = 3
 
-    label_color: Tuple[float, float, float, float] = (0.88, 0.88, 0.88, 1.0)
+    label_color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     label_scale: float = 1.0
+
+    # margen para no dibujar labels pegadas arriba/abajo
+    edge_dead_zone_factor: float = 0.38
 
 
 class PriceAxisOverlay:
@@ -67,7 +70,7 @@ class PriceAxisOverlay:
             minors = out.get("minor", []) or []
         else:
             majors = self.price_scale.get_ticks(target_count=self.style.target_major_ticks)
-
+        
         # 1) ticks menores
         for _, yy in minors:
             y = float(yy)
@@ -95,7 +98,7 @@ class PriceAxisOverlay:
             else:
                 x1 = ax
                 x2 = ax + self.style.tick_major_len
-
+            # IMPORTANTE: dibujar los ticks mayores después de los menores, para que no queden tapados por el flush final del frame.
             r.draw_line_px(
                 x1, y, x2, y,
                 color=self.style.tick_color,
@@ -105,7 +108,7 @@ class PriceAxisOverlay:
         # 3) grid
         every = max(1, int(self.style.grid_every_n_minor_ticks))
 
-        all_ticks = []
+        all_ticks: List[Tuple[float, float, bool]] = []
         for price, y in majors:
             all_ticks.append((float(price), float(y), True))
         for price, y in minors:
@@ -130,10 +133,11 @@ class PriceAxisOverlay:
         # IMPORTANTE:
         # flush del renderer batcheado antes del texto,
         # para que el texto no quede tapado por el flush final del frame.
+        # Además, el flush hace que el orden de dibujo sea consistente, para que los labels no queden tapados por los ticks o gridlines.
         if self.text_renderer is not None:
             r.flush()
 
-            last_label_y: Optional[float] = None
+            last_label_text_y: Optional[float] = None
 
             if self.style.label_minor:
                 normalized_items = [(price, yy) for price, yy, _ in all_ticks]
@@ -142,27 +146,43 @@ class PriceAxisOverlay:
 
             for price, yy in normalized_items:
                 y = float(yy)
-            
-
-                if last_label_y is not None and abs(y - last_label_y) < self.style.min_label_gap_px:
-                    continue
 
                 label = f"{price:.{self.style.decimals}f}"
                 text_w, text_h = self.text_renderer.measure_text(
                     label,
                     scale=self.style.label_scale,
                 )
+                # extra_margin_px es un margen adicional para evitar dibujar labels pegados al borde del eje cuando el espacio es limitado. Se basa en el tamaño del texto y un factor definido en el estilo.
+                extra_margin_px = 6 
+                # el edge_dead_zone es un margen adicional basado en el tamaño del texto, para evitar dibujar labels pegados al borde del eje cuando el espacio es limitado.
+                edge_dead_zone = text_h * float(self.style.edge_dead_zone_factor)
+
+                top_limit = ay + edge_dead_zone + extra_margin_px  
+                bottom_limit = ay + ah - edge_dead_zone - extra_margin_px  
+                
+                if y <= top_limit:
+                    continue
+                if y >= bottom_limit:
+                    continue
 
                 # baseline aproximada
-                text_y = y + text_h * 0.35
+                text_y = y + text_h * 0.30
 
                 if side == "left":
                     text_x = ax + aw - self.style.padding_px - text_w
                 else:
                     text_x = ax + self.style.tick_major_len + self.style.padding_px
 
+                # clamp final
                 text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
                 text_y = max(ay + text_h, min(text_y, ay + ah - 2.0))
+
+                # comparar con la posición final del texto, no con y
+                if (
+                    last_label_text_y is not None
+                    and abs(text_y - last_label_text_y) < self.style.min_label_gap_px
+                ):
+                    continue
 
                 self.text_renderer.render_text(
                     label,
@@ -172,7 +192,7 @@ class PriceAxisOverlay:
                     color=self.style.label_color,
                 )
 
-                last_label_y = y
+                last_label_text_y = text_y
 
 
 @dataclass
