@@ -1,3 +1,4 @@
+# charts/scales/time_scale.py
 from __future__ import annotations
 
 import math
@@ -42,9 +43,22 @@ class TimeScale:
         self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
 
     def set_timestamps(self, ts_list: List[datetime]) -> None:
+        """Usar solo al cargar datos iniciales"""
         self._timestamps = ts_list[:]
         self.total_bars = len(ts_list)
         self.right_offset = max(self.min_right_offset, self.right_offset)
+        self._recalc_visible()
+
+    def append_timestamp(self, ts: datetime) -> None:
+        """Agregar una sola vela nueva (optimizado para live)"""
+        self._timestamps.append(ts)
+        self.total_bars = len(self._timestamps)
+        self._recalc_visible()
+
+    def update_last_timestamp(self, ts: datetime) -> None:
+        """Actualizar la vela actual (la que está formando)"""
+        if self._timestamps:
+            self._timestamps[-1] = ts
         self._recalc_visible()
 
     def set_view(self, x: float, w: float) -> None:
@@ -75,17 +89,11 @@ class TimeScale:
         self.bar_spacing = _clamp(self.bar_spacing, self.min_bar_spacing, self.max_bar_spacing)
         self.right_offset = max(self.min_right_offset, self.right_offset)
 
-        left_float_index = self._float_index_at_x(self.view_x)
-        right_float_index = self._float_index_at_x(self.view_x + self.view_w)
+        left_float = self._float_index_at_x(self.view_x)
+        right_float = self._float_index_at_x(self.view_x + self.view_w)
 
-        start_idx = int(math.floor(min(left_float_index, right_float_index))) - 1
-        end_idx = int(math.ceil(max(left_float_index, right_float_index))) + 1
-
-        start_idx = max(0, start_idx)
-        end_idx = min(self._last_data_index, end_idx)
-
-        if end_idx < start_idx:
-            start_idx, end_idx = end_idx, start_idx
+        start_idx = max(0, int(math.floor(min(left_float, right_float))) - 1)
+        end_idx = min(self._last_data_index, int(math.ceil(max(left_float, right_float))) + 1)
 
         self._visible = VisibleRange(
             start_ts=self._timestamps[start_idx],
@@ -94,6 +102,7 @@ class TimeScale:
             end_idx=end_idx,
         )
 
+    # === Métodos existentes (sin cambios) ===
     def index_to_x(self, index: int) -> float:
         if self.total_bars <= 0:
             return self.view_x
@@ -106,25 +115,9 @@ class TimeScale:
         idx = round(self._float_index_at_x(x))
         return int(_clamp(idx, 0, self._last_data_index))
 
-    def time_to_x(self, ts: datetime) -> float:
-        if not self._timestamps:
-            return self.view_x
-        try:
-            idx = self._timestamps.index(ts)
-        except ValueError:
-            idx = self._visible.end_idx if self._visible.end_idx >= 0 else 0
-        return self.index_to_x(idx)
-
-    def x_to_time(self, x: float) -> datetime:
-        if not self._timestamps or self._visible.end_idx < self._visible.start_idx:
-            return datetime.min
-        idx = self.x_to_index(x)
-        return self._timestamps[idx]
-
     def zoom_at_x(self, mouse_x: float, delta: float) -> None:
         if self.total_bars <= 0:
             return
-
         old_spacing = self.bar_spacing
         old_float_index = self._float_index_at_x(mouse_x)
 
@@ -136,8 +129,7 @@ class TimeScale:
         target_x = new_anchor - bars_from_last * self.bar_spacing
 
         delta_px = float(mouse_x) - target_x
-        delta_bars = delta_px / self.bar_spacing
-        self.right_offset -= delta_bars
+        self.right_offset -= delta_px / self.bar_spacing
         self.right_offset = max(self.min_right_offset, self.right_offset)
 
         self._recalc_visible()
@@ -145,11 +137,6 @@ class TimeScale:
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
             return
-
         self.right_offset += dx_px / self.bar_spacing
         self.right_offset = max(self.min_right_offset, self.right_offset)
-        self._recalc_visible()
-
-    def scroll_to_realtime(self) -> None:
-        self.right_offset = max(self.min_right_offset, 2.0)
         self._recalc_visible()

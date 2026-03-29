@@ -43,7 +43,7 @@ class ChartOverlay:
         "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
         "plot_padding": {
             "left": 0,
-            "right": 8,   # pequeño aire visual interno antes del price axis
+            "right": 0,   # pequeño aire visual interno antes del price axis
             "top": 0,
             "bottom": 0,
         },
@@ -76,8 +76,8 @@ class ChartOverlay:
 
         self._x = self._y = self._w = self._h = 0.0
         self._layout: Optional[OverlayLayout] = None
-        self._y_down = bool(self.config["coords"].get("y_down", True))
-
+        self._y_down = bool(self.config["coords"].get("y_down", True))   
+    
     # -------------------------------------------------
     # Public API
     # -------------------------------------------------
@@ -152,7 +152,7 @@ class ChartOverlay:
 
         price_w = float(pa["width_px"]) if pa["show"] else 0.0
         time_h = float(ta["height_px"]) if ta["show"] else 0.0
-
+    
         plot_pad_left = float(plot_pad.get("left", 0.0))
         plot_pad_right = float(plot_pad.get("right", 0.0))
         plot_pad_top = float(plot_pad.get("top", 0.0))

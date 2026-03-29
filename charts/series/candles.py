@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -20,25 +21,21 @@ class CandleStyle:
     min_width_px: float = 1.0
     max_width_px: float = 120.0
 
-    # GAP
     min_gap_px: float = 1.0
     max_gap_px: float = 40.0
     gap_extra_px: float = 0.0
-
-    # ancho extra inicial de la vela
     candle_width_extra_px: float = 0.0
 
-    # transición del gap con zoom
+    # Transición suave del gap al hacer zoom
     gap_base_px: float = 2.0
     gap_growth_per_px: float = 0.02
     gap_transition_start_px: float = 14.0
     gap_transition_softness_px: float = 8.0
 
     min_body_height_px: float = 1.0
-
     snap_x_to_half_pixel: bool = True
     draw_borders: bool = True
-    debug: bool = False
+    clip_to_plot: bool = True
 
 
 class CandleSeries:
@@ -53,77 +50,44 @@ class CandleSeries:
         d = self.data[i]
         return d.h, d.l
 
+    # ====================== CÁLCULOS INTERNOS ======================
+
     def _smoothstep(self, t: float) -> float:
         t = max(0.0, min(1.0, t))
         return t * t * (3.0 - 2.0 * t)
 
-    def _compute_zoom_gap(self, bar_spacing: float) -> float:
-        st = self.style
-
-        softness = max(1.0, st.gap_transition_softness_px)
-        start = st.gap_transition_start_px
-        end = start + softness
-
-        if bar_spacing <= start:
-            gap = st.gap_base_px
-        elif bar_spacing >= end:
-            extra_spacing = bar_spacing - start
-            gap = st.gap_base_px + extra_spacing * st.gap_growth_per_px
-        else:
-            t = (bar_spacing - start) / softness
-            blend = self._smoothstep(t)
-
-            gap_before = st.gap_base_px
-            extra_spacing = bar_spacing - start
-            gap_after = st.gap_base_px + extra_spacing * st.gap_growth_per_px
-
-            gap = gap_before * (1.0 - blend) + gap_after * blend
-
-        gap = max(st.min_gap_px, min(st.max_gap_px, gap))
-        return gap
-
     def _compute_bar_width(self, bar_spacing: float) -> float:
         st = self.style
 
-        zoom_gap = self._compute_zoom_gap(bar_spacing)
+        # Calcular gap dinámico según zoom
+        if bar_spacing <= st.gap_transition_start_px:
+            gap = st.gap_base_px
+        else:
+            softness = max(1.0, st.gap_transition_softness_px)
+            t = min(1.0, (bar_spacing - st.gap_transition_start_px) / softness)
+            extra = (bar_spacing - st.gap_transition_start_px) * st.gap_growth_per_px
+            gap = st.gap_base_px * (1.0 - t) + (st.gap_base_px + extra) * t
 
-        # el gap extra escala con el zoom para evitar el "colapso" visual
-        gap_scale = max(1.0, bar_spacing / max(1.0, st.gap_transition_start_px))
-        scaled_gap_extra = st.gap_extra_px * gap_scale
+        gap = max(st.min_gap_px, min(st.max_gap_px, gap + st.gap_extra_px))
 
-        target_gap = zoom_gap + scaled_gap_extra
-        target_gap = max(st.min_gap_px, min(st.max_gap_px, target_gap))
-
-        # ancho base
-        base_width = bar_spacing - target_gap
-
-        # ancho extra manual
-        desired_width = base_width + st.candle_width_extra_px
-
-        # respetar gap mínimo real
-        max_width_allowed = bar_spacing - st.min_gap_px
-        bar_width = min(desired_width, max_width_allowed)
-
+        bar_width = bar_spacing - gap
+        bar_width += st.candle_width_extra_px
         bar_width = max(st.min_width_px, min(st.max_width_px, bar_width))
 
-        # snap visual
-        bar_width = math.floor(bar_width * 2.0) / 2.0
-
-        if st.debug:
-            real_gap = max(0.0, bar_spacing - bar_width)
-            print(
-                "[CandleSeries] "
-                f"bar_spacing={bar_spacing:.3f} "
-                f"zoom_gap={zoom_gap:.3f} "
-                f"gap_extra={st.gap_extra_px:.3f} "
-                f"scaled_gap_extra={scaled_gap_extra:.3f} "
-                f"target_gap={target_gap:.3f} "
-                f"candle_extra={st.candle_width_extra_px:.3f} "
-                f"real_gap={real_gap:.3f} "
-                f"final_bar_width={bar_width:.3f}"
-            )
+        if st.snap_x_to_half_pixel:
+            bar_width = math.floor(bar_width * 2.0) / 2.0
 
         return bar_width
+
+    def _get_vertical_clip(self, price_scale: PriceScale) -> Tuple[float, float]:
+        """Devuelve (top, bottom) del área visible del plot"""
+        if hasattr(price_scale, "_usable_bounds"):
+            y0, y1, _ = price_scale._usable_bounds()
+            return min(y0, y1), max(y0, y1)
+        # fallback
+        return price_scale.view_y, price_scale.view_y + price_scale.view_h
+
+    # ====================== DRAW ======================
 
     def draw(
         self,
@@ -142,6 +106,7 @@ class CandleSeries:
 
         view_left = time_scale.view_x
         view_right = time_scale.view_x + time_scale.view_w
+        clip_top, clip_bottom = self._get_vertical_clip(price_scale)
 
         for i in range(visible_start, visible_end + 1):
             if i < 0 or i >= len(self.data):
@@ -150,6 +115,7 @@ class CandleSeries:
             d = self.data[i]
             x_center = time_scale.index_to_x(i)
 
+            # Early reject horizontal
             half = bar_width / 2.0 + 2.0
             if x_center + half < view_left or x_center - half > view_right:
                 continue
@@ -159,6 +125,20 @@ class CandleSeries:
             y_h = price_scale.price_to_y(d.h)
             y_l = price_scale.price_to_y(d.l)
 
+            # Early reject vertical
+            candle_top = min(y_h, y_l, y_o, y_c)
+            candle_bottom = max(y_h, y_l, y_o, y_c)
+
+            if candle_bottom < clip_top or candle_top > clip_bottom:
+                continue
+
+            # Aplicar clipping vertical
+            if st.clip_to_plot:
+                y_o = max(clip_top, min(clip_bottom, y_o))
+                y_c = max(clip_top, min(clip_bottom, y_c))
+                y_h = max(clip_top, min(clip_bottom, y_h))
+                y_l = max(clip_top, min(clip_bottom, y_l))
+
             is_up = d.c >= d.o
             color = st.up_color if is_up else st.down_color
 
@@ -166,44 +146,23 @@ class CandleSeries:
                 x_center = math.floor(x_center) + 0.5
 
             left = x_center - bar_width / 2.0
-            top = min(y_o, y_c)
-            bottom = max(y_o, y_c)
-            body_height = max(st.min_body_height_px, bottom - top)
+            body_top = min(y_o, y_c)
+            body_bottom = max(y_o, y_c)
+            body_height = max(st.min_body_height_px, body_bottom - body_top)
 
-            # 1) borde primero
-            if st.draw_borders and st.border_width_px > 0:
-                border_color = (0.0, 0.0, 0.0, 0.9) if is_up else (0.2, 0.2, 0.2, 0.9)
-                renderer.draw_rect_px(
-                    left - st.border_width_px,
-                    top - st.border_width_px,
-                    bar_width + 2.0 * st.border_width_px,
-                    body_height + 2.0 * st.border_width_px,
-                    color=border_color,
-                )
+            # Wick (mecha)
+            renderer.draw_line_px(x_center, y_h, x_center, y_l, color, st.wick_width_px)
 
-            # 2) mecha
-            renderer.draw_line_px(
-                x1=x_center,
-                y1=y_h,
-                x2=x_center,
-                y2=y_l,
-                color=color,
-                width=st.wick_width_px,
-            )
+            # Body (cuerpo)
+            if body_height > 0.0:
+                if st.draw_borders and st.border_width_px > 0:
+                    border_color = (0.0, 0.0, 0.0, 0.9) if is_up else (0.2, 0.2, 0.2, 0.9)
+                    renderer.draw_rect_px(
+                        left - st.border_width_px,
+                        body_top - st.border_width_px,
+                        bar_width + 2 * st.border_width_px,
+                        body_height + 2 * st.border_width_px,
+                        border_color,
+                    )
 
-            # 3) cuerpo
-            renderer.draw_rect_px(
-                left,
-                top,
-                bar_width,
-                body_height,
-                color=color,
-            )
-
-            if st.debug:
-                print(
-                    "[CandleSeries.draw] "
-                    f"i={i} x_center={x_center:.2f} "
-                    f"bar_spacing={bar_spacing:.2f} "
-                    f"bar_width={bar_width:.2f}"
-                )
+                renderer.draw_rect_px(left, body_top, bar_width, body_height, color)
