@@ -23,17 +23,17 @@ class TimeScale:
     def __init__(
         self,
         bar_spacing: float = 10.0,
-        right_offset: float = 2.0,
+        right_offset: float = 8.0,           # margen derecho más cómodo
         min_bar_spacing: float = 3.0,
         max_bar_spacing: float = 300.0,
-        min_right_offset: float = 0.0,
     ) -> None:
         self.bar_spacing = float(bar_spacing)
         self.min_bar_spacing = float(min_bar_spacing)
         self.max_bar_spacing = float(max_bar_spacing)
 
         self.right_offset = float(right_offset)
-        self.min_right_offset = float(min_right_offset)
+        self.max_right_offset = 50.0                     # máximo espacio vacío a la derecha
+        self.min_right_offset = -1_000_000.0             # dummy
 
         self.total_bars: int = 0
         self.view_x: float = 0.0
@@ -42,23 +42,35 @@ class TimeScale:
         self._timestamps: List[datetime] = []
         self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
 
+    def _clamp_right_offset(self) -> None:
+        """Ajusta right_offset dinámicamente según la cantidad total de velas"""
+        if self.total_bars <= 1:
+            self.right_offset = max(0.0, self.right_offset)
+            return
+
+        # Permitir ver hasta la primera vela (índice 0)
+        self.right_offset = max(-(self.total_bars - 1), self.right_offset)
+
+        # Evitar demasiado espacio vacío a la derecha
+        self.right_offset = min(self.max_right_offset, self.right_offset)
+
     def set_timestamps(self, ts_list: List[datetime]) -> None:
         """Usar solo al cargar datos iniciales"""
         self._timestamps = ts_list[:]
         self.total_bars = len(ts_list)
-        self.right_offset = max(self.min_right_offset, self.right_offset)
+        self._clamp_right_offset()
         self._recalc_visible()
 
     def append_timestamp(self, ts: datetime) -> None:
-        """Agregar una sola vela nueva (optimizado para live)"""
         self._timestamps.append(ts)
         self.total_bars = len(self._timestamps)
+        self._clamp_right_offset()
         self._recalc_visible()
 
     def update_last_timestamp(self, ts: datetime) -> None:
-        """Actualizar la vela actual (la que está formando)"""
         if self._timestamps:
             self._timestamps[-1] = ts
+        self._clamp_right_offset()
         self._recalc_visible()
 
     def set_view(self, x: float, w: float) -> None:
@@ -79,21 +91,27 @@ class TimeScale:
     def _float_index_at_x(self, x: float) -> float:
         if self.total_bars <= 0:
             return 0.0
-        return self._last_data_index - ((self._right_anchor_x() - float(x)) / self.bar_spacing)
+        return self._last_data_index - ((self._right_anchor_x() - float(x)) / max(0.1, self.bar_spacing))
 
     def _recalc_visible(self) -> None:
+        """Recalcula el rango visible de forma segura"""
         if self.total_bars <= 0 or not self._timestamps:
             self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
             return
 
         self.bar_spacing = _clamp(self.bar_spacing, self.min_bar_spacing, self.max_bar_spacing)
-        self.right_offset = max(self.min_right_offset, self.right_offset)
+        self._clamp_right_offset()
 
         left_float = self._float_index_at_x(self.view_x)
         right_float = self._float_index_at_x(self.view_x + self.view_w)
 
         start_idx = max(0, int(math.floor(min(left_float, right_float))) - 1)
         end_idx = min(self._last_data_index, int(math.ceil(max(left_float, right_float))) + 1)
+
+        # Protección extra contra IndexError
+        start_idx = min(start_idx, self._last_data_index)
+        if end_idx < start_idx:
+            end_idx = start_idx
 
         self._visible = VisibleRange(
             start_ts=self._timestamps[start_idx],
@@ -102,7 +120,6 @@ class TimeScale:
             end_idx=end_idx,
         )
 
-    # === Métodos existentes (sin cambios) ===
     def index_to_x(self, index: int) -> float:
         if self.total_bars <= 0:
             return self.view_x
@@ -118,6 +135,7 @@ class TimeScale:
     def zoom_at_x(self, mouse_x: float, delta: float) -> None:
         if self.total_bars <= 0:
             return
+
         old_spacing = self.bar_spacing
         old_float_index = self._float_index_at_x(mouse_x)
 
@@ -130,13 +148,13 @@ class TimeScale:
 
         delta_px = float(mouse_x) - target_x
         self.right_offset -= delta_px / self.bar_spacing
-        self.right_offset = max(self.min_right_offset, self.right_offset)
 
+        self._clamp_right_offset()
         self._recalc_visible()
 
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
             return
         self.right_offset += dx_px / self.bar_spacing
-        self.right_offset = max(self.min_right_offset, self.right_offset)
+        self._clamp_right_offset()
         self._recalc_visible()

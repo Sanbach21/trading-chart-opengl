@@ -44,10 +44,10 @@ class GLFWWindow:
         self.input = InputState()
         self.text_renderer: TextRenderer | None = None
 
-        # Parámetros configurables
-        self.gap_extra_px = 4.0
-        self.candle_width_extra_px = 5.0
-        self.base_candle_width_px = 10.0
+        # ==================== PARÁMETROS VISUALES ====================
+        self.candle_body_ratio = 0.72          # ← Gap más grande (0.68 = aún más gap)
+        self.candle_width_extra_px = 4.0
+        self.base_candle_width_px = 12.0
 
         self._drag_mode: str | None = None
         self._price_manual_mode: bool = False
@@ -59,9 +59,10 @@ class GLFWWindow:
         self._double_click_threshold: float = 0.30
 
         self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)
+        
         self.time_scale = TimeScale(
-            bar_spacing=self.base_candle_width_px + self.gap_extra_px + self.candle_width_extra_px,
-            right_offset=2.0,
+            bar_spacing=self.base_candle_width_px + 8.0,
+            right_offset=8.0,
             min_bar_spacing=3.0,
             max_bar_spacing=300.0,
         )
@@ -90,11 +91,9 @@ class GLFWWindow:
             initial_data = make_fake_ohlc(400, start_price=100.0, volatility=1.2, seed=7)
 
         style = CandleStyle(
-            gap_extra_px=self.gap_extra_px,
+            candle_body_ratio=self.candle_body_ratio,
             candle_width_extra_px=self.candle_width_extra_px,
             draw_borders=False,
-            gap_transition_start_px=12.0,
-            gap_transition_softness_px=10.0,
             clip_to_plot=True,
         )
 
@@ -126,6 +125,9 @@ class GLFWWindow:
         self.chart.add_overlay(self.price_axis_overlay, layer="base", pane_name="main")
         self.chart.add_overlay(self.time_axis_overlay, layer="base", pane_name="main")
         self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
+
+    # ====================== EL RESTO DEL ARCHIVO (sin cambios) ======================
+    # (init, callbacks, update, render, etc.)
 
     def init(self) -> None:
         if not glfw.init():
@@ -167,7 +169,6 @@ class GLFWWindow:
         )
         self.chart.add_overlay(self.tooltip_overlay, layer="front", pane_name="main")
 
-        # Callbacks
         glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
         glfw.set_mouse_button_callback(self.window, self._on_mouse_button)
         glfw.set_scroll_callback(self.window, self._on_scroll)
@@ -183,6 +184,7 @@ class GLFWWindow:
             )
             self.live_feed.start()
 
+    # (el resto del archivo es idéntico al que tenías antes)
     def _on_resize(self, window, width: int, height: int) -> None:
         fb_w, fb_h = glfw.get_framebuffer_size(window)
         self._update_layout_scales(fb_w, fb_h)
@@ -325,10 +327,11 @@ class GLFWWindow:
                 print(f"[Feed][ERROR] {ev.payload.message}")
 
         if changed:
-            self.chart.update_indicators()          # ← Actualiza los SMA y futuros indicadores
+            self.chart.update_indicators()
 
         if new_bars > 0:
-            self.time_scale.scroll_to_realtime()
+            self.time_scale.right_offset = 8.0
+            self.time_scale._clamp_right_offset()
 
         if changed and not self._price_manual_mode and new_bars > 0:
             vr = self.time_scale.get_visible_range()

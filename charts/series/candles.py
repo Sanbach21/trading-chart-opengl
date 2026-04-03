@@ -23,19 +23,14 @@ class CandleStyle:
 
     min_gap_px: float = 1.0
     max_gap_px: float = 40.0
-    gap_extra_px: float = 0.0
-    candle_width_extra_px: float = 0.0
 
-    # Transición suave del gap al hacer zoom
-    gap_base_px: float = 2.0
-    gap_growth_per_px: float = 0.02
-    gap_transition_start_px: float = 14.0
-    gap_transition_softness_px: float = 8.0
+    # === PARÁMETROS FÁCILES ===
+    candle_body_ratio: float = 0.72      # ← 0.68 = gap más grande | 0.78 = gap más pequeño
+    candle_width_extra_px: float = 4.0
 
-    min_body_height_px: float = 1.0
-    snap_x_to_half_pixel: bool = True
-    draw_borders: bool = True
     clip_to_plot: bool = True
+    snap_x_to_half_pixel: bool = True
+    draw_borders: bool = False
 
 
 class CandleSeries:
@@ -50,44 +45,34 @@ class CandleSeries:
         d = self.data[i]
         return d.h, d.l
 
-    # ====================== CÁLCULOS INTERNOS ======================
-
-    def _smoothstep(self, t: float) -> float:
-        t = max(0.0, min(1.0, t))
-        return t * t * (3.0 - 2.0 * t)
-
     def _compute_bar_width(self, bar_spacing: float) -> float:
+        """Fórmula proporcional profesional (evita solapamiento en zoom in)"""
         st = self.style
 
-        # Calcular gap dinámico según zoom
-        if bar_spacing <= st.gap_transition_start_px:
-            gap = st.gap_base_px
-        else:
-            softness = max(1.0, st.gap_transition_softness_px)
-            t = min(1.0, (bar_spacing - st.gap_transition_start_px) / softness)
-            extra = (bar_spacing - st.gap_transition_start_px) * st.gap_growth_per_px
-            gap = st.gap_base_px * (1.0 - t) + (st.gap_base_px + extra) * t
+        # Ancho de la vela proporcional al espacio total
+        candle_width = bar_spacing * st.candle_body_ratio
+        candle_width += st.candle_width_extra_px
 
-        gap = max(st.min_gap_px, min(st.max_gap_px, gap + st.gap_extra_px))
+        # Seguridad: nunca puede ser más ancho que el espacio disponible
+        candle_width = min(candle_width, bar_spacing * 0.95)
+        candle_width = max(st.min_width_px, candle_width)
 
-        bar_width = bar_spacing - gap
-        bar_width += st.candle_width_extra_px
-        bar_width = max(st.min_width_px, min(st.max_width_px, bar_width))
+        # Gap = resto
+        gap = bar_spacing - candle_width
+        gap = max(st.min_gap_px, min(st.max_gap_px, gap))
+
+        final_width = candle_width
 
         if st.snap_x_to_half_pixel:
-            bar_width = math.floor(bar_width * 2.0) / 2.0
+            final_width = math.floor(final_width * 2.0) / 2.0
 
-        return bar_width
+        return final_width
 
     def _get_vertical_clip(self, price_scale: PriceScale) -> Tuple[float, float]:
-        """Devuelve (top, bottom) del área visible del plot"""
         if hasattr(price_scale, "_usable_bounds"):
             y0, y1, _ = price_scale._usable_bounds()
             return min(y0, y1), max(y0, y1)
-        # fallback
         return price_scale.view_y, price_scale.view_y + price_scale.view_h
-
-    # ====================== DRAW ======================
 
     def draw(
         self,
@@ -115,7 +100,6 @@ class CandleSeries:
             d = self.data[i]
             x_center = time_scale.index_to_x(i)
 
-            # Early reject horizontal
             half = bar_width / 2.0 + 2.0
             if x_center + half < view_left or x_center - half > view_right:
                 continue
@@ -125,14 +109,12 @@ class CandleSeries:
             y_h = price_scale.price_to_y(d.h)
             y_l = price_scale.price_to_y(d.l)
 
-            # Early reject vertical
             candle_top = min(y_h, y_l, y_o, y_c)
             candle_bottom = max(y_h, y_l, y_o, y_c)
 
             if candle_bottom < clip_top or candle_top > clip_bottom:
                 continue
 
-            # Aplicar clipping vertical
             if st.clip_to_plot:
                 y_o = max(clip_top, min(clip_bottom, y_o))
                 y_c = max(clip_top, min(clip_bottom, y_c))
@@ -148,12 +130,10 @@ class CandleSeries:
             left = x_center - bar_width / 2.0
             body_top = min(y_o, y_c)
             body_bottom = max(y_o, y_c)
-            body_height = max(st.min_body_height_px, body_bottom - body_top)
+            body_height = max(1.0, body_bottom - body_top)
 
-            # Wick (mecha)
             renderer.draw_line_px(x_center, y_h, x_center, y_l, color, st.wick_width_px)
 
-            # Body (cuerpo)
             if body_height > 0.0:
                 if st.draw_borders and st.border_width_px > 0:
                     border_color = (0.0, 0.0, 0.0, 0.9) if is_up else (0.2, 0.2, 0.2, 0.9)
@@ -164,5 +144,4 @@ class CandleSeries:
                         body_height + 2 * st.border_width_px,
                         border_color,
                     )
-
                 renderer.draw_rect_px(left, body_top, bar_width, body_height, color)
