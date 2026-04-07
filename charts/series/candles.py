@@ -45,6 +45,16 @@ class CandleStyle:
     # Opciones de dibujo
     draw_borders: bool = True
     clip_to_plot: bool = False
+    min_gap_px: float = 1.0
+    max_gap_px: float = 40.0
+
+    # === PARÁMETROS FÁCILES ===
+    candle_body_ratio: float = 0.72      # ← 0.68 = gap más grande | 0.78 = gap más pequeño
+    candle_width_extra_px: float = 4.0
+
+    clip_to_plot: bool = True
+    snap_x_to_half_pixel: bool = True
+    draw_borders: bool = False
 
     # ←←← NUEVO: Desplazamiento horizontal de las velas
     # Útil para alinear mejor el centro de la vela con las líneas verticales del grid.
@@ -85,15 +95,39 @@ class CandleSeries:
 
         # Aplicar límites y extras
         gap = max(st.min_gap_px, min(st.max_gap_px, gap + st.gap_extra_px))
+    def _compute_bar_width(self, bar_spacing: float) -> float:
+        """Fórmula proporcional profesional (evita solapamiento en zoom in)"""
+        st = self.style
 
-        bar_width = bar_spacing - gap
-        bar_width += st.candle_width_extra_px
-        bar_width = max(st.min_width_px, min(st.max_width_px, bar_width))
+        # Ancho de la vela proporcional al espacio total
+        candle_width = bar_spacing * st.candle_body_ratio
+        candle_width += st.candle_width_extra_px
+
+        # Seguridad: nunca puede ser más ancho que el espacio disponible
+        candle_width = min(candle_width, bar_spacing * 0.95)
+        candle_width = max(st.min_width_px, candle_width)
+
+        # Gap = resto
+        gap = bar_spacing - candle_width
+        gap = max(st.min_gap_px, min(st.max_gap_px, gap))
+
+        final_width = candle_width
 
         # Redondeo a medio píxel para máxima nitidez y sincronía con el grid
         bar_width = math.floor(bar_width * 2.0) / 2.0
 
         return bar_width, gap
+
+        if st.snap_x_to_half_pixel:
+            final_width = math.floor(final_width * 2.0) / 2.0
+
+        return final_width
+
+    def _get_vertical_clip(self, price_scale: PriceScale) -> Tuple[float, float]:
+        if hasattr(price_scale, "_usable_bounds"):
+            y0, y1, _ = price_scale._usable_bounds()
+            return min(y0, y1), max(y0, y1)
+        return price_scale.view_y, price_scale.view_y + price_scale.view_h
 
     def draw(
         self,
@@ -141,6 +175,7 @@ class CandleSeries:
 
             # ====================== VISIBILIDAD ======================
             half = bar_width / 2.0
+            half = bar_width / 2.0 + 2.0
             if x_center + half < view_left or x_center - half > view_right:
                 continue
 
@@ -151,13 +186,25 @@ class CandleSeries:
             y_l = price_scale.price_to_y(d.l)
 
             # ====================== DIBUJO ======================
+            candle_top = min(y_h, y_l, y_o, y_c)
+            candle_bottom = max(y_h, y_l, y_o, y_c)
+
+            if candle_bottom < clip_top or candle_top > clip_bottom:
+                continue
+
+            if st.clip_to_plot:
+                y_o = max(clip_top, min(clip_bottom, y_o))
+                y_c = max(clip_top, min(clip_bottom, y_c))
+                y_h = max(clip_top, min(clip_bottom, y_h))
+                y_l = max(clip_top, min(clip_bottom, y_l))
+
             is_up = d.c >= d.o
             color = st.up_color if is_up else st.down_color
 
             left = x_center - bar_width / 2.0
             body_top = min(y_o, y_c)
             body_bottom = max(y_o, y_c)
-            body_height = max(st.min_body_height_px, body_bottom - body_top)
+            body_height = max(1.0, body_bottom - body_top)
 
             # Mecha (wick)
             renderer.draw_line_px(
@@ -168,6 +215,8 @@ class CandleSeries:
             )
 
             # Cuerpo de la vela
+            renderer.draw_line_px(x_center, y_h, x_center, y_l, color, st.wick_width_px)
+
             if body_height > 0.0:
                 if st.draw_borders and st.border_width_px > 0:
                     border_color = (0.0, 0.0, 0.0, 0.9) if is_up else (0.2, 0.2, 0.2, 0.9)
@@ -184,3 +233,4 @@ class CandleSeries:
                     bar_width, body_height,
                     color
                 )
+                renderer.draw_rect_px(left, body_top, bar_width, body_height, color)
