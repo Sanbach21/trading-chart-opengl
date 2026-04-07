@@ -1,120 +1,47 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Tuple, List, Optional, Set
-
 
 Rect = Tuple[float, float, float, float]
 
 
 # ============================================================
-# ESTILOS DEL EJE DE PRECIOS
+# PRICE AXIS STYLE
 # ============================================================
-
 @dataclass
 class PriceAxisStyle:
-    """
-    Configuración visual y de comportamiento del eje de precios.
-
-    Atributos más importantes:
-    - tick_major_len / tick_minor_len:
-        Largo de los ticks mayores y menores.
-    - tick_width:
-        Grosor de los ticks.
-    - target_major_ticks:
-        Cantidad objetivo de ticks mayores.
-    - minor_divisions:
-        Cantidad de subdivisiones menores entre ticks mayores.
-    - label_minor:
-        Si True, también se intentan dibujar labels en ticks menores.
-        Si False, solo se dibujan labels en ticks mayores.
-    - min_label_gap_px:
-        Distancia mínima vertical entre labels visibles.
-    - edge_dead_zone_factor:
-        Factor para evitar que las etiquetas queden muy pegadas
-        a los bordes superior e inferior del eje.
-    """
     padding_px: float = 6.0
-
-    grid_major_color: Tuple[float, float, float, float] = (0.42, 0.42, 0.42, 0.38)
-    grid_minor_color: Tuple[float, float, float, float] = (0.32, 0.32, 0.32, 0.22)
-    grid_major_width: float = 1.0
-    grid_minor_width: float = 1.0
-
     tick_major_len: float = 7.0
     tick_minor_len: float = 4.0
     tick_width: float = 1.0
     tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
-
     decimals: int = 2
     target_major_ticks: int = 12
     minor_divisions: int = 3
     label_minor: bool = True
     min_label_gap_px: float = 5.0
-
-    grid_every_n_minor_ticks: int = 3
-
     label_color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     label_scale: float = 1.0
-
-    # margen para no dibujar labels pegadas arriba/abajo
     edge_dead_zone_factor: float = 0.38
-
-    # margen fijo adicional para no dibujar labels demasiado cerca del borde
     label_edge_extra_margin_px: float = 6.0
 
 
-# ============================================================
-# OVERLAY DEL EJE DE PRECIOS
-# ============================================================
-
 class PriceAxisOverlay:
-    """
-    Dibuja el eje de precios del gráfico.
-
-    Responsabilidades:
-    - Dibujar ticks mayores y menores en el eje de precios.
-    - Dibujar grid horizontal dentro del plot.
-    - Dibujar etiquetas (labels) de precio.
-    - Mantener sincronía visual entre tick y label:
-        si un label no se dibuja por límite superior/inferior
-        o por colisión con otro label, su tick asociado tampoco se dibuja.
-
-    Importante:
-    - El grid NO desaparece junto con el label.
-    - Solo desaparece el tick asociado al label oculto.
-    """
-
     def __init__(self, overlay, price_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.price_scale = price_scale
         self.text_renderer = None
-
         self.style = PriceAxisStyle()
         if config:
             for k, v in config.items():
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
 
-    # --------------------------------------------------------
-    # Helpers internos
-    # --------------------------------------------------------
-
     def _get_side(self) -> str:
-        """
-        Devuelve el lado del eje de precios: 'left' o 'right'.
-        """
         return (self.overlay.config["price_axis"].get("side", "right") or "right").lower()
 
     def _get_ticks(self) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
-        """
-        Obtiene los ticks mayores y menores desde PriceScale.
-
-        Retorna:
-            majors: lista de (price, y)
-            minors: lista de (price, y)
-        """
         majors: List[Tuple[float, float]] = []
         minors: List[Tuple[float, float]] = []
 
@@ -135,20 +62,9 @@ class PriceAxisOverlay:
         majors: List[Tuple[float, float]],
         minors: List[Tuple[float, float]],
     ) -> List[Tuple[float, float, bool, int]]:
-        """
-        Unifica ticks mayores y menores en una sola lista ordenada.
-
-        Retorna:
-            Lista de tuplas:
-                (price, y, is_major, source_index)
-
-        source_index:
-            índice interno estable para poder identificar el tick incluso
-            si luego queremos guardarlo en sets de visibles.
-        """
         all_ticks: List[Tuple[float, float, bool, int]] = []
-
         idx = 0
+
         for price, y in majors:
             all_ticks.append((float(price), float(y), True, idx))
             idx += 1
@@ -161,13 +77,6 @@ class PriceAxisOverlay:
         return all_ticks
 
     def _is_inside_tick_clip(self, y: float, plot_y: float, plot_h: float) -> bool:
-        """
-        Comprueba si una coordenada Y está dentro del recorte vertical básico
-        del plot para ticks y grid.
-
-        Este recorte es más simple que el de labels. Sirve para evitar dibujar
-        elementos fuera del área vertical visible del gráfico.
-        """
         top_clip = plot_y + 2.0
         bottom_clip = plot_y + plot_h - 2.0
         return top_clip <= y <= bottom_clip
@@ -178,20 +87,8 @@ class PriceAxisOverlay:
         ah: float,
         text_h: float,
     ) -> Tuple[float, float]:
-        """
-        Calcula los límites verticales efectivos donde un label puede dibujarse.
-
-        Se combinan:
-        - el alto del texto
-        - edge_dead_zone_factor
-        - un margen extra fijo
-
-        Esto hace que las etiquetas no queden pegadas a los bordes superior
-        o inferior del eje.
-        """
         extra_margin_px = float(self.style.label_edge_extra_margin_px)
         edge_dead_zone = text_h * float(self.style.edge_dead_zone_factor)
-
         top_limit = ay + edge_dead_zone + extra_margin_px
         bottom_limit = ay + ah - edge_dead_zone - extra_margin_px
         return top_limit, bottom_limit
@@ -203,11 +100,7 @@ class PriceAxisOverlay:
         ah: float,
         text_h: float,
     ) -> bool:
-        """
-        Devuelve True si un label está dentro de los límites verticales válidos.
-        """
         top_limit, bottom_limit = self._get_label_vertical_limits(ay, ah, text_h)
-
         if y <= top_limit:
             return False
         if y >= bottom_limit:
@@ -215,22 +108,11 @@ class PriceAxisOverlay:
         return True
 
     def _measure_label(self, label: str) -> Tuple[float, float]:
-        """
-        Mide el ancho y alto del texto del label.
-
-        Si no hay text_renderer disponible, retorna una medida aproximada
-        para que la lógica no falle.
-        """
         if self.text_renderer is None:
-            # fallback aproximado
             text_h = 12.0 * float(self.style.label_scale)
             text_w = max(10.0, len(label) * 7.0 * float(self.style.label_scale))
             return text_w, text_h
-
-        return self.text_renderer.measure_text(
-            label,
-            scale=self.style.label_scale,
-        )
+        return self.text_renderer.measure_text(label, scale=self.style.label_scale)
 
     def _compute_visible_label_tick_ids(
         self,
@@ -239,39 +121,24 @@ class PriceAxisOverlay:
         ay: float,
         ah: float,
     ) -> Set[int]:
-        """
-        Calcula qué ticks tienen label visible.
-
-        Esto es el corazón de la sincronización:
-        - si un label NO puede dibujarse, su tick asociado tampoco se dibuja
-        - pero el grid no depende de esto
-
-        Reglas aplicadas:
-        1. Debe estar dentro de los límites verticales válidos del label
-        2. Debe respetar min_label_gap_px respecto al label previo visible
-        3. Si label_minor=False, solo se consideran ticks mayores
-        """
         visible_ids: Set[int] = set()
         last_label_text_y: Optional[float] = None
 
         if self.style.label_minor:
             candidates = all_ticks
         else:
-            # si no se dibujan labels menores, solo considerar los mayores
             major_set = {(float(p), float(y)) for p, y in majors}
             candidates = [item for item in all_ticks if (item[0], item[1]) in major_set and item[2]]
 
         for price, y, _is_major, source_index in candidates:
             label = f"{price:.{self.style.decimals}f}"
-            text_w, text_h = self._measure_label(label)
+            _text_w, text_h = self._measure_label(label)
 
             if not self._can_draw_label_by_limits(y, ay, ah, text_h):
                 continue
 
-            # baseline aproximada usada también por el render final
             text_y = y + text_h * 0.30
 
-            # comparación por posición final del texto
             if (
                 last_label_text_y is not None
                 and abs(text_y - last_label_text_y) < self.style.min_label_gap_px
@@ -283,22 +150,7 @@ class PriceAxisOverlay:
 
         return visible_ids
 
-    # --------------------------------------------------------
-    # Draw principal
-    # --------------------------------------------------------
-
     def draw(self, r) -> None:
-        """
-        Dibuja:
-        1. ticks menores visibles
-        2. ticks mayores visibles
-        3. grid horizontal
-        4. labels visibles
-
-        Nota:
-        - Los ticks visibles dependen de la visibilidad del label asociado.
-        - El grid NO depende de eso.
-        """
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
         ax, ay, aw, ah = layout.price_axis_rect
@@ -307,13 +159,9 @@ class PriceAxisOverlay:
             return
 
         side = self._get_side()
-
         majors, minors = self._get_ticks()
         all_ticks = self._build_all_ticks(majors, minors)
 
-        # ----------------------------------------------------
-        # Calcular qué ticks tienen labels visibles
-        # ----------------------------------------------------
         if self.text_renderer is not None:
             visible_label_tick_ids = self._compute_visible_label_tick_ids(
                 all_ticks=all_ticks,
@@ -322,33 +170,23 @@ class PriceAxisOverlay:
                 ah=ah,
             )
         else:
-            # Si no hay text renderer, mantenemos el comportamiento simple:
-            # ticks visibles por recorte del plot.
-            visible_label_tick_ids = {source_index for _, y, _, source_index in all_ticks
-                                      if self._is_inside_tick_clip(y, plot_y, plot_h)}
+            visible_label_tick_ids = {
+                source_index
+                for _, y, _, source_index in all_ticks
+                if self._is_inside_tick_clip(y, plot_y, plot_h)
+            }
 
-        # ----------------------------------------------------
-        # 1) ticks menores
-        # Solo dibujarlos si:
-        # - están dentro del clip básico del plot
-        # - y además su label asociado es visible
-        # ----------------------------------------------------
-        for price, yy, is_major, source_index in all_ticks:
+        for _price, yy, is_major, source_index in all_ticks:
             if is_major:
                 continue
 
             y = float(yy)
-
             if not self._is_inside_tick_clip(y, plot_y, plot_h):
                 continue
 
-            # Si label_minor=True, los ticks menores solo aparecen
-            # cuando su label correspondiente aparece.
             if self.style.label_minor and source_index not in visible_label_tick_ids:
                 continue
 
-            # Si label_minor=False, los ticks menores pueden quedarse,
-            # porque no están "acompañando" un label menor visible.
             if side == "left":
                 x1 = ax + aw - self.style.tick_minor_len
                 x2 = ax + aw
@@ -357,23 +195,17 @@ class PriceAxisOverlay:
                 x2 = ax + self.style.tick_minor_len
 
             r.draw_line_px(
-                x1, y, x2, y,
+                x1, y,
+                x2, y,
                 color=self.style.tick_color,
                 width=float(self.style.tick_width),
             )
 
-        # ----------------------------------------------------
-        # 2) ticks mayores
-        # Solo dibujarlos si:
-        # - están dentro del clip básico
-        # - y su label asociado es visible
-        # ----------------------------------------------------
-        for price, yy, is_major, source_index in all_ticks:
+        for _price, yy, is_major, source_index in all_ticks:
             if not is_major:
                 continue
 
             y = float(yy)
-
             if not self._is_inside_tick_clip(y, plot_y, plot_h):
                 continue
 
@@ -388,47 +220,15 @@ class PriceAxisOverlay:
                 x2 = ax + self.style.tick_major_len
 
             r.draw_line_px(
-                x1, y, x2, y,
+                x1, y,
+                x2, y,
                 color=self.style.tick_color,
                 width=float(self.style.tick_width),
             )
 
-        # ----------------------------------------------------
-        # 3) grid
-        # El grid NO desaparece junto con el label.
-        # Solo usa el clip vertical básico y la lógica de every_n_minor_ticks.
-        # ----------------------------------------------------
-        every = max(1, int(self.style.grid_every_n_minor_ticks))
-
-        for idx, (_price, y, is_major, _source_index) in enumerate(all_ticks):
-            if not self._is_inside_tick_clip(y, plot_y, plot_h):
-                continue
-
-            if not (is_major or (idx % every == 0)):
-                continue
-
-            color = self.style.grid_major_color if is_major else self.style.grid_minor_color
-            width = self.style.grid_major_width if is_major else self.style.grid_minor_width
-
-            r.draw_line_px(
-                plot_x,
-                y,
-                plot_x + plot_w,
-                y,
-                color=color,
-                width=float(width),
-            )
-
-        # ----------------------------------------------------
-        # 4) labels
-        # Dibujar solo los labels cuyos ticks fueron marcados como visibles.
-        # ----------------------------------------------------
         if self.text_renderer is not None:
-            # flush antes del texto para que no quede tapado por el batch final
             r.flush()
 
-            # Repetimos el mismo orden y la misma lógica usada para construir
-            # visible_label_tick_ids, para asegurar coherencia visual.
             if self.style.label_minor:
                 label_candidates = all_ticks
             else:
@@ -443,7 +243,6 @@ class PriceAxisOverlay:
                     continue
 
                 label = f"{price:.{self.style.decimals}f}"
-
                 text_w, text_h = self.text_renderer.measure_text(
                     label,
                     scale=self.style.label_scale,
@@ -456,7 +255,6 @@ class PriceAxisOverlay:
                 else:
                     text_x = ax + self.style.tick_major_len + self.style.padding_px
 
-                # clamp horizontal y vertical final
                 text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
                 text_y = max(ay + text_h, min(text_y, ay + ah - 2.0))
 
@@ -470,23 +268,13 @@ class PriceAxisOverlay:
 
 
 # ============================================================
-# ESTILOS DEL EJE DE TIEMPO
+# TIME AXIS STYLE
 # ============================================================
-
 @dataclass
 class TimeAxisStyle:
-    """
-    Configuración visual del eje de tiempo.
-    """
-    padding_px: float = 6.0
-
     tick_len: float = 6.0
     tick_width: float = 1.0
     tick_color: Tuple[float, float, float, float] = (0.60, 0.60, 0.60, 0.9)
-
-    gridline_in_plot: bool = True
-    grid_major_color: Tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.25)
-    grid_major_width: float = 1.0
 
     min_label_spacing_px: float = 90.0
     format_compact: bool = True
@@ -494,77 +282,73 @@ class TimeAxisStyle:
     label_color: Tuple[float, float, float, float] = (0.88, 0.88, 0.88, 1.0)
     label_scale: float = 1.0
 
+    crisp_ticks: bool = True
+    left_clip_margin_px: float = 12.0
+    right_clip_margin_px: float = 12.0
 
-# ============================================================
-# OVERLAY DEL EJE DE TIEMPO
-# ============================================================
 
 class TimeAxisOverlay:
     """
-    Dibuja el eje de tiempo inferior del gráfico.
+    Dibuja ticks y labels del eje de tiempo.
+    Importante:
+    - Usa la misma lógica de ticks que GridOverlay.
+    - Usa la misma X alineada que GridOverlay y CandleSeries.
+    - Usa el rectángulo de time axis calculado por ChartOverlay.
     """
 
     def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.time_scale = time_scale
         self.text_renderer = None
-
         self.style = TimeAxisStyle()
         if config:
             for k, v in config.items():
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
 
+    def _get_tick_indices(self) -> List[int]:
+        return self.time_scale.get_tick_indices(
+            min_spacing_px=self.style.min_label_spacing_px,
+            extend_by_one=False,
+        )
+
+    def _get_time_x_limits(self, ax: float, aw: float) -> Tuple[float, float]:
+        left_limit = ax + float(self.style.left_clip_margin_px)
+        right_limit = ax + aw - float(self.style.right_clip_margin_px)
+        return left_limit, right_limit
+
+    def _is_time_x_inside_limits(self, x: float, ax: float, aw: float) -> bool:
+        left_limit, right_limit = self._get_time_x_limits(ax, aw)
+        return left_limit <= x <= right_limit
+
     def draw(self, r) -> None:
-        """
-        Dibuja:
-        - ticks verticales del eje de tiempo
-        - grid vertical opcional dentro del plot
-        - labels de hora/fecha
-        """
         layout = self.overlay.get_layout()
-        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
         ax, ay, aw, ah = layout.time_axis_rect
 
-        if aw <= 0 or ah <= 0 or plot_w <= 0:
+        if aw <= 0 or ah <= 0:
             return
 
-        vr = self.time_scale.get_visible_range()
-        vs = int(vr.start_idx)
-        ve = int(vr.end_idx)
-        if ve <= vs:
+        tick_indices = self._get_tick_indices()
+        if not tick_indices:
             return
-
-        x0 = self.time_scale.index_to_x(vs)
-        x1 = self.time_scale.index_to_x(min(vs + 1, ve))
-        px_per_bar = max(1.0, abs(x1 - x0))
-        step = max(1, int(self.style.min_label_spacing_px / px_per_bar))
 
         text_items: List[Tuple[float, str]] = []
 
-        for i in range(vs, ve + 1, step):
+        for i in tick_indices:
             if i >= len(self.time_scale._timestamps):
                 break
 
-            x = float(self.time_scale.index_to_x(i))
+            x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_ticks)
 
-            if self.style.gridline_in_plot:
-                r.draw_line_px(
-                    x,
-                    plot_y,
-                    x,
-                    plot_y + plot_h,
-                    color=self.style.grid_major_color,
-                    width=float(self.style.grid_major_width),
-                )
+            if not self._is_time_x_inside_limits(x, ax, aw):
+                continue
 
             y1 = ay
             y2 = ay + self.style.tick_len
+
             r.draw_line_px(
-                x,
-                y1,
-                x,
-                y2,
+                x, y1,
+                x, y2,
                 color=self.style.tick_color,
                 width=float(self.style.tick_width),
             )
@@ -575,16 +359,21 @@ class TimeAxisOverlay:
         if self.text_renderer is not None and text_items:
             r.flush()
 
+            left_limit, right_limit = self._get_time_x_limits(ax, aw)
+
             for x, label in text_items:
                 text_w, text_h = self.text_renderer.measure_text(
                     label,
                     scale=self.style.label_scale,
                 )
-
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
+                if text_x < left_limit:
+                    continue
+                if text_x + text_w > right_limit:
+                    continue
+
                 text_y = max(ay + text_h, min(text_y, ay + ah - 2.0))
 
                 self.text_renderer.render_text(
@@ -596,9 +385,6 @@ class TimeAxisOverlay:
                 )
 
     def _format_time(self, ts: datetime) -> str:
-        """
-        Formatea el timestamp del eje de tiempo.
-        """
         if self.style.format_compact:
             return ts.strftime("%H:%M")
         return ts.strftime("%Y-%m-%d %H:%M")

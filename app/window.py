@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import glfw
 from OpenGL.GL import GL_COLOR_BUFFER_BIT, glClear, glClearColor, glViewport
 
@@ -8,6 +7,7 @@ from charts.chart import Chart
 from charts.overlays.axis import PriceAxisOverlay, TimeAxisOverlay
 from charts.overlays.chart_overlay import ChartOverlay
 from charts.overlays.crosshair import CrosshairOverlay
+from charts.overlays.grid import GridOverlay, GridStyle
 from charts.overlays.tooltip import TooltipOverlay
 from charts.scales.price_scale import PriceScale
 from charts.scales.time_scale import TimeScale
@@ -24,7 +24,7 @@ class GLFWWindow:
         self,
         width: int = 1280,
         height: int = 720,
-        title: str = "Libreria Grafica OpenGL",
+        title: str = "Libreria Grafica OpenGL - Trading Chart",
         live_mode: bool = False,
         live_symbol: str = "BTCUSDT",
         live_interval: str = "1m",
@@ -34,8 +34,7 @@ class GLFWWindow:
         self.height = height
         self.title = title
         self.window = None
-
-        self.live_mode: bool = bool(live_mode)
+        self.live_mode = bool(live_mode)
         self.live_symbol = live_symbol
         self.live_interval = live_interval
         self.history_limit = int(history_limit)
@@ -44,25 +43,25 @@ class GLFWWindow:
         self.input = InputState()
         self.text_renderer: TextRenderer | None = None
 
-        # Parámetros configurables
-        self.gap_extra_px = 4.0
+        self.gap_extra_px = 7.0
         self.candle_width_extra_px = 5.0
-        self.base_candle_width_px = 10.0
+        self.base_candle_width_px = 11.0
 
         self._drag_mode: str | None = None
         self._price_manual_mode: bool = False
 
+        # Layout principal
         self._price_axis_width_px: float = 90.0
         self._time_axis_height_px: float = 28.0
-
         self._last_price_axis_click_time: float = -999.0
         self._double_click_threshold: float = 0.30
 
+        # ==================== ESCALAS ====================
         self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)
         self.time_scale = TimeScale(
             bar_spacing=self.base_candle_width_px + self.gap_extra_px + self.candle_width_extra_px,
-            right_offset=2.0,
-            min_bar_spacing=3.0,
+            right_offset=0.0,
+            min_bar_spacing=4.0,
             max_bar_spacing=300.0,
         )
 
@@ -70,17 +69,14 @@ class GLFWWindow:
         self.chart = Chart()
         self.chart.set_scales(self.time_scale, self.price_scale)
 
+        # ==================== DATOS ====================
         self.live_feed: BinanceWSFeed | None = None
-
-        # ==================== CARGA DE DATOS ====================
         if self.live_mode:
             print("[REST] Descargando histórico inicial...")
             rest = BinanceRESTFeed()
             try:
                 initial_data: list[OHLC] = rest.fetch_klines(
-                    symbol=self.live_symbol,
-                    interval=self.live_interval,
-                    limit=self.history_limit,
+                    symbol=self.live_symbol, interval=self.live_interval, limit=self.history_limit
                 )
                 print(f"[REST] {len(initial_data)} velas cargadas")
             except Exception as e:
@@ -90,12 +86,17 @@ class GLFWWindow:
             initial_data = make_fake_ohlc(400, start_price=100.0, volatility=1.2, seed=7)
 
         style = CandleStyle(
-            gap_extra_px=self.gap_extra_px,
-            candle_width_extra_px=self.candle_width_extra_px,
-            draw_borders=False,
-            gap_transition_start_px=12.0,
-            gap_transition_softness_px=10.0,
-            clip_to_plot=True,
+            gap_extra_px=5.5,
+            candle_width_extra_px=4.0,
+            gap_base_px=1.6,
+            gap_growth_per_px=0.055,
+            gap_transition_start_px=24.0,
+            gap_transition_softness_px=38.0,
+            min_gap_px=1.1,
+            max_gap_px=45.0,
+            min_width_px=0.7,
+            max_width_px=115.0,
+            draw_borders=True,
         )
 
         self.series = CandleSeries(initial_data, style=style)
@@ -106,7 +107,7 @@ class GLFWWindow:
         from charts.indicators.base import IndicatorStyle
 
         sma_20 = SMA(period=20, style=IndicatorStyle(color=(0.0, 0.85, 1.0, 1.0), width=1.8))
-        sma_50 = SMA(period=50, style=IndicatorStyle(color=(1.0, 0.65, 0.0, 1.0), width=1.6))
+        sma_50 = SMA(period=50, style=IndicatorStyle(color=(1.0, 0.65, 0.0, 1.0), width=1.8))
 
         sma_20.values = sma_20.calculate(self.series.data)
         sma_50.values = sma_50.calculate(self.series.data)
@@ -115,17 +116,11 @@ class GLFWWindow:
         self.chart.add_indicator(sma_50, pane_name="main")
 
         # ==================== OVERLAYS ====================
-        self.price_axis_overlay = PriceAxisOverlay(self.chart_overlay, self.price_scale)
-        self.time_axis_overlay = TimeAxisOverlay(self.chart_overlay, self.time_scale)
-        self.crosshair_overlay = CrosshairOverlay(self.chart_overlay, self.input, self.series)
-        
+        self.price_axis_overlay = None
+        self.time_axis_overlay = None
+        self.crosshair_overlay = None
+        self.grid_overlay = None
         self.tooltip_overlay: TooltipOverlay | None = None
-
-        self.chart.add_series(self.series, pane_name="main")
-        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.price_axis_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.time_axis_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
 
     def init(self) -> None:
         if not glfw.init():
@@ -147,33 +142,40 @@ class GLFWWindow:
         self.renderer2d.init()
 
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
-
         self.text_renderer = TextRenderer(
-            font_path=r"C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\font\fonts_fft\GoogleSans-VariableFont_GRAD,opsz,wght.ttf",
+            font_path=r"C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\font\fonts_fft\Montserrat-Regular.ttf",
             font_size=11,
             width=fb_w,
             height=fb_h,
         )
         self.text_renderer.init_gl()
 
-        self.price_axis_overlay.text_renderer = self.text_renderer
-        self.time_axis_overlay.text_renderer = self.text_renderer
-
+        self.price_axis_overlay = PriceAxisOverlay(self.chart_overlay, self.price_scale)
+        self.time_axis_overlay = TimeAxisOverlay(self.chart_overlay, self.time_scale)
+        self.crosshair_overlay = CrosshairOverlay(self.chart_overlay, self.input, self.series)
+        self.grid_overlay = GridOverlay(
+            overlay=self.chart_overlay,
+            price_scale=self.price_scale,
+            time_scale=self.time_scale,
+            style=GridStyle(show_horizontal=True, show_vertical=True),
+        )
         self.tooltip_overlay = TooltipOverlay(
             overlay=self.chart_overlay,
             input_state=self.input,
             series=self.series,
             text_renderer=self.text_renderer,
         )
+
+        self.price_axis_overlay.text_renderer = self.text_renderer
+        self.time_axis_overlay.text_renderer = self.text_renderer
+
+        self.chart.add_series(self.series, pane_name="main")
+        self.chart.add_overlay(self.grid_overlay, layer="base", pane_name="main")
+        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
+        self.chart.add_overlay(self.price_axis_overlay, layer="base", pane_name="main")
+        self.chart.add_overlay(self.time_axis_overlay, layer="base", pane_name="main")
+        self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
         self.chart.add_overlay(self.tooltip_overlay, layer="front", pane_name="main")
-
-        # Callbacks
-        glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
-        glfw.set_mouse_button_callback(self.window, self._on_mouse_button)
-        glfw.set_scroll_callback(self.window, self._on_scroll)
-        glfw.set_framebuffer_size_callback(self.window, self._on_resize)
-
-        self._update_layout_scales(fb_w, fb_h)
 
         if self.live_mode:
             self.live_feed = BinanceWSFeed(
@@ -183,20 +185,39 @@ class GLFWWindow:
             )
             self.live_feed.start()
 
+        glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
+        glfw.set_mouse_button_callback(self.window, self._on_mouse_button)
+        glfw.set_scroll_callback(self.window, self._on_scroll)
+        glfw.set_framebuffer_size_callback(self.window, self._on_resize)
+
+        self._update_layout_scales(fb_w, fb_h)
+
     def _on_resize(self, window, width: int, height: int) -> None:
         fb_w, fb_h = glfw.get_framebuffer_size(window)
         self._update_layout_scales(fb_w, fb_h)
         if self.text_renderer is not None:
             self.text_renderer.update_projection(fb_w, fb_h)
 
+    # ============================================================
+    # RECTÁNGULOS DE LAYOUT
+    # ============================================================
     def _chart_rect(self) -> tuple[float, float, float, float]:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
-        return 0.0, 0.0, max(1.0, fb_w - self._price_axis_width_px), max(1.0, fb_h - self._time_axis_height_px)
+        chart_w = max(1.0, fb_w - self._price_axis_width_px)
+        chart_h = max(1.0, fb_h - self._time_axis_height_px)
+        return 0.0, 0.0, chart_w, chart_h
 
     def _price_axis_rect(self) -> tuple[float, float, float, float]:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         x = max(0.0, fb_w - self._price_axis_width_px)
-        return x, 0.0, self._price_axis_width_px, max(1.0, fb_h - self._time_axis_height_px)
+        h = max(1.0, fb_h - self._time_axis_height_px)
+        return x, 0.0, self._price_axis_width_px, h
+
+    def _time_axis_rect(self) -> tuple[float, float, float, float]:
+        fb_w, fb_h = glfw.get_framebuffer_size(self.window)
+        w = max(1.0, fb_w - self._price_axis_width_px)
+        y = max(0.0, fb_h - self._time_axis_height_px)
+        return 0.0, y, w, self._time_axis_height_px
 
     def _point_in_rect(self, px: float, py: float, rect: tuple[float, float, float, float]) -> bool:
         x, y, w, h = rect
@@ -218,7 +239,6 @@ class GLFWWindow:
         self._price_manual_mode = False
         self.price_scale.end_scale()
         self.price_scale.clear_manual_range()
-
         vr = self.time_scale.get_visible_range()
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             self.price_scale.autoscale_from_provider(
@@ -279,6 +299,7 @@ class GLFWWindow:
             elif self._drag_mode == "price-scale" and abs(self.input.mouse.dy) > 0.0:
                 self.price_scale.scale_to(self.input.mouse.y)
 
+        # Autoscale de precio (solo si no está en modo manual)
         vr = self.time_scale.get_visible_range()
         if not self._price_manual_mode and vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             self.price_scale.autoscale_from_provider(
@@ -288,14 +309,12 @@ class GLFWWindow:
     def _update_live_feed(self) -> None:
         if self.live_feed is None:
             return
-
         events = self.live_feed.poll_events(limit=300)
         if not events:
             return
 
         changed = False
         new_bars = 0
-
         for ev in events:
             if ev.type == "bar":
                 bar: OHLC = ev.payload
@@ -307,7 +326,6 @@ class GLFWWindow:
                     continue
 
                 last = self.series.data[-1]
-
                 if last.ts == bar.ts:
                     self.series.data[-1] = bar
                     self.time_scale.update_last_timestamp(bar.ts)
@@ -325,7 +343,7 @@ class GLFWWindow:
                 print(f"[Feed][ERROR] {ev.payload.message}")
 
         if changed:
-            self.chart.update_indicators()          # ← Actualiza los SMA y futuros indicadores
+            self.chart.update_indicators()
 
         if new_bars > 0:
             self.time_scale.scroll_to_realtime()
@@ -368,15 +386,11 @@ class GLFWWindow:
         if self.live_feed is not None:
             self.live_feed.stop()
             self.live_feed = None
-
         if self.text_renderer is not None:
             self.text_renderer.shutdown()
             self.text_renderer = None
-
         self.renderer2d.shutdown()
-
         if self.window is not None:
             glfw.destroy_window(self.window)
             self.window = None
-
         glfw.terminate()

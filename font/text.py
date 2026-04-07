@@ -164,33 +164,51 @@ class TextRenderer:
         face.set_pixel_sizes(0, self.font_size)
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
 
-        for char_code in range(32, 256):   # ASCII + Latin-1
+        print(f"[TextRenderer] Cargando fuente: {self.font_path} | Tamaño: {self.font_size}px")
+
+        for char_code in range(32, 256):  # ASCII + Latin-1 (suficiente para precios, horas, etc.)
             ch = chr(char_code)
-            face.load_char(ch, freetype.FT_LOAD_RENDER)
-            bitmap = face.glyph.bitmap
+            try:
+                face.load_char(ch, freetype.FT_LOAD_RENDER)
+                bitmap = face.glyph.bitmap
 
-            tex = glGenTextures(1)
-            glBindTexture(GL_TEXTURE_2D, tex)
+                if bitmap.width == 0 or bitmap.rows == 0:
+                    # Glyph vacío (espacio, etc.)
+                    self.characters[ch] = Character(
+                        texture_id=0,
+                        size=(0, 0),
+                        bearing=(0, 0),
+                        advance=face.glyph.advance.x,
+                    )
+                    continue
 
-            glTexImage2D(
-                GL_TEXTURE_2D, 0, GL_RED,
-                bitmap.width, bitmap.rows, 0,
-                GL_RED, GL_UNSIGNED_BYTE, bitmap.buffer
-            )
+                tex = glGenTextures(1)
+                glBindTexture(GL_TEXTURE_2D, tex)
 
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+                glTexImage2D(
+                    GL_TEXTURE_2D, 0, GL_RED,
+                    bitmap.width, bitmap.rows, 0,
+                    GL_RED, GL_UNSIGNED_BYTE, bitmap.buffer
+                )
 
-            self.characters[ch] = Character(
-                texture_id=tex,
-                size=(bitmap.width, bitmap.rows),
-                bearing=(face.glyph.bitmap_left, face.glyph.bitmap_top),
-                advance=face.glyph.advance.x,
-            )
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+
+                self.characters[ch] = Character(
+                    texture_id=tex,
+                    size=(bitmap.width, bitmap.rows),
+                    bearing=(face.glyph.bitmap_left, face.glyph.bitmap_top),
+                    advance=face.glyph.advance.x,
+                )
+            except Exception as e:
+                print(f"[TextRenderer] Warning: No se pudo cargar glyph '{ch}': {e}")
+                # Fallback simple
+                self.characters[ch] = Character(0, (0, 0), (0, 0), 0)
 
         glBindTexture(GL_TEXTURE_2D, 0)
+        print(f"[TextRenderer] {len(self.characters)} glyphs cargados correctamente.")
 
     def update_projection(self, width: int, height: int) -> None:
         self.width = max(1, int(width))
@@ -206,7 +224,6 @@ class TextRenderer:
 
     def render_text(self, text: str, x: float, y: float, scale: float = 1.0,
                     color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)) -> None:
-        # ... (mantengo el método render_text anterior que ya funcionaba)
         if not self._initialized or self.program is None:
             return
 
@@ -228,7 +245,10 @@ class TextRenderer:
 
         for ch in text:
             c = self.characters.get(ch)
-            if c is None:
+            if c is None or c.texture_id == 0:
+                # Avanzar aunque sea espacio
+                if c is not None:
+                    pen_x += (c.advance >> 6) * scale
                 continue
 
             xpos = pen_x + c.bearing[0] * scale
@@ -266,7 +286,7 @@ class TextRenderer:
         max_h = 0.0
         for ch in text:
             c = self.characters.get(ch)
-            if c is None:
+            if c is None or c.texture_id == 0:
                 continue
             width += (c.advance >> 6) * scale
             max_h = max(max_h, c.size[1] * scale)
@@ -274,7 +294,8 @@ class TextRenderer:
 
     def shutdown(self) -> None:
         for char in self.characters.values():
-            glDeleteTextures(1, [char.texture_id])
+            if char.texture_id != 0:
+                glDeleteTextures(1, [char.texture_id])
         self.characters.clear()
 
         if self.vbo: glDeleteBuffers(1, [self.vbo])

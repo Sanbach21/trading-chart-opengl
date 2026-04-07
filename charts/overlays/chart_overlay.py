@@ -12,7 +12,11 @@ def clamp(v: float, lo: float, hi: float) -> float:
 
 
 def merge_defaults(user_cfg: Optional[Dict[str, Any]], defaults: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge shallow + one-level nested dicts, user overrides defaults."""
+    """
+    Mezcla configuración por defecto con configuración del usuario.
+
+    Soporta mezcla shallow y de un nivel para subdiccionarios.
+    """
     out = dict(defaults)
     for k, v in (user_cfg or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
@@ -34,16 +38,23 @@ class OverlayLayout:
 
 class ChartOverlay:
     """
-    Layout + bandas opcionales + separadores.
-    - NO dibuja grid (eso lo hace axis overlay).
-    - NO dibuja labels/ticks (axis overlay).
+    Maneja el layout visual del chart.
+
+    Responsabilidades:
+    - calcular las zonas del chart
+    - separar plot, price axis y time axis
+    - dibujar bandas de ejes y separadores
+
+    Idea importante:
+    - El time axis NO debe ocupar el ancho completo si existe price axis.
+    - El time axis debe alinearse con el ancho útil del plot.
     """
 
     DEFAULT_CONFIG: Dict[str, Any] = {
         "padding": {"left": 0, "right": 0, "top": 0, "bottom": 0},
         "plot_padding": {
             "left": 0,
-            "right": 0,   # pequeño aire visual interno antes del price axis
+            "right": 0,
             "top": 0,
             "bottom": 0,
         },
@@ -74,15 +85,22 @@ class ChartOverlay:
         self.price_scale = price_scale
         self.config = merge_defaults(config, self.DEFAULT_CONFIG)
 
-        self._x = self._y = self._w = self._h = 0.0
+        self._x = 0.0
+        self._y = 0.0
+        self._w = 0.0
+        self._h = 0.0
+
         self._layout: Optional[OverlayLayout] = None
-        self._y_down = bool(self.config["coords"].get("y_down", True))   
-    
+        self._y_down = bool(self.config["coords"].get("y_down", True))
+
     # -------------------------------------------------
     # Public API
     # -------------------------------------------------
     def set_view(self, x: float, y: float, w: float, h: float) -> None:
-        self._x, self._y, self._w, self._h = float(x), float(y), float(w), float(h)
+        self._x = float(x)
+        self._y = float(y)
+        self._w = float(w)
+        self._h = float(h)
         self._layout = None
 
     def get_layout(self) -> OverlayLayout:
@@ -128,6 +146,15 @@ class ChartOverlay:
     # Layout calculation
     # -------------------------------------------------
     def _compute_layout(self) -> OverlayLayout:
+        """
+        Calcula el layout completo.
+
+        Regla clave:
+        - Primero se calcula la zona interior total.
+        - Luego se separa price axis del plot.
+        - Finalmente el time axis toma el MISMO ancho horizontal del plot,
+          no el ancho interior total.
+        """
         pad = self.config["padding"]
         left = float(pad["left"])
         right = float(pad["right"])
@@ -152,13 +179,16 @@ class ChartOverlay:
 
         price_w = float(pa["width_px"]) if pa["show"] else 0.0
         time_h = float(ta["height_px"]) if ta["show"] else 0.0
-    
+
         plot_pad_left = float(plot_pad.get("left", 0.0))
         plot_pad_right = float(plot_pad.get("right", 0.0))
         plot_pad_top = float(plot_pad.get("top", 0.0))
         plot_pad_bottom = float(plot_pad.get("bottom", 0.0))
 
-        # time axis abajo
+        # -------------------------------------------------
+        # Espacio vertical bruto:
+        # el time axis siempre descuenta altura al plot
+        # -------------------------------------------------
         if self._y_down:
             plot_y_raw = inner_y
             plot_h_raw = max(0.0, inner_h - time_h)
@@ -168,13 +198,20 @@ class ChartOverlay:
             plot_y_raw = inner_y + time_h
             time_y = inner_y
 
-        time_rect: Rect = (inner_x, time_y, inner_w, time_h) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
-
-        # price axis izquierda/derecha
+        # -------------------------------------------------
+        # Separación horizontal:
+        # primero separar plot y price axis
+        # -------------------------------------------------
         side = (pa["side"] or "right").lower()
 
         if side == "left":
-            price_rect_raw: Rect = (inner_x, plot_y_raw, price_w, plot_h_raw)
+            price_rect_raw: Rect = (
+                inner_x,
+                plot_y_raw,
+                price_w,
+                plot_h_raw,
+            ) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
+
             plot_rect_raw: Rect = (
                 inner_x + price_w,
                 plot_y_raw,
@@ -188,6 +225,7 @@ class ChartOverlay:
                 max(0.0, inner_w - price_w),
                 plot_h_raw,
             )
+
             price_rect_raw = (
                 inner_x + plot_rect_raw[2],
                 plot_y_raw,
@@ -195,7 +233,9 @@ class ChartOverlay:
                 plot_h_raw,
             ) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
 
-        # Aplicar padding interno solo al plot, no al eje
+        # -------------------------------------------------
+        # Aplicar padding interno solo al plot
+        # -------------------------------------------------
         prx, pry, prw, prh = plot_rect_raw
         plot_rect: Rect = (
             prx + plot_pad_left,
@@ -204,7 +244,32 @@ class ChartOverlay:
             max(0.0, prh - plot_pad_top - plot_pad_bottom),
         )
 
-        price_rect = price_rect_raw
+        # -------------------------------------------------
+        # Ajustar price axis a la altura visible del plot
+        # para que el eje y la banda visual coincidan mejor
+        # -------------------------------------------------
+        pax, pay, paw, pah = price_rect_raw
+        price_rect: Rect = (
+            pax,
+            plot_y_raw,
+            paw,
+            plot_h_raw,
+        ) if pa["show"] else (0.0, 0.0, 0.0, 0.0)
+
+        # -------------------------------------------------
+        # FIX PRINCIPAL:
+        # el time axis debe ocupar el mismo ancho horizontal del plot,
+        # NO el ancho total interior.
+        # -------------------------------------------------
+        tx = plot_rect_raw[0]
+        tw = plot_rect_raw[2]
+
+        time_rect: Rect = (
+            tx,
+            time_y,
+            tw,
+            time_h,
+        ) if ta["show"] else (0.0, 0.0, 0.0, 0.0)
 
         return OverlayLayout(
             chart_rect=chart_rect,

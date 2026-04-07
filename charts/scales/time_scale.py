@@ -1,6 +1,4 @@
-# charts/scales/time_scale.py
 from __future__ import annotations
-
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,6 +11,7 @@ def _clamp(x: float, lo: float, hi: float) -> float:
 
 @dataclass
 class VisibleRange:
+    """Rango visible actual (para dibujado)"""
     start_ts: datetime
     end_ts: datetime
     start_idx: int
@@ -20,43 +19,39 @@ class VisibleRange:
 
 
 class TimeScale:
+    """TimeScale profesional inspirada en TradingView Lightweight Charts.
+    Usa modelo Logical + right_offset en barras lógicas.
+    """
+
     def __init__(
         self,
-        bar_spacing: float = 10.0,
-        right_offset: float = 2.0,
+        bar_spacing: float = 12.0,
+        right_offset: float = 0.0,      # Ahora en número de barras (más natural)
         min_bar_spacing: float = 3.0,
         max_bar_spacing: float = 300.0,
-        min_right_offset: float = 0.0,
     ) -> None:
         self.bar_spacing = float(bar_spacing)
         self.min_bar_spacing = float(min_bar_spacing)
         self.max_bar_spacing = float(max_bar_spacing)
-
-        self.right_offset = float(right_offset)
-        self.min_right_offset = float(min_right_offset)
-
+        self.right_offset = float(right_offset)   # barras lógicas
         self.total_bars: int = 0
         self.view_x: float = 0.0
         self.view_w: float = 1.0
-
         self._timestamps: List[datetime] = []
         self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
 
+    # ====================== API PÚBLICA ======================
     def set_timestamps(self, ts_list: List[datetime]) -> None:
-        """Usar solo al cargar datos iniciales"""
         self._timestamps = ts_list[:]
         self.total_bars = len(ts_list)
-        self.right_offset = max(self.min_right_offset, self.right_offset)
         self._recalc_visible()
 
     def append_timestamp(self, ts: datetime) -> None:
-        """Agregar una sola vela nueva (optimizado para live)"""
         self._timestamps.append(ts)
         self.total_bars = len(self._timestamps)
         self._recalc_visible()
 
     def update_last_timestamp(self, ts: datetime) -> None:
-        """Actualizar la vela actual (la que está formando)"""
         if self._timestamps:
             self._timestamps[-1] = ts
         self._recalc_visible()
@@ -69,9 +64,52 @@ class TimeScale:
     def get_visible_range(self) -> VisibleRange:
         return self._visible
 
+    def scroll_to_realtime(self) -> None:
+        """Equivalente a scrollToRealTime() de Lightweight Charts"""
+        if self.total_bars <= 0:
+            return
+        self.right_offset = 0.0
+        self._recalc_visible()
+
+    def fit_content(self, padding_right_bars: float = 3.0) -> None:
+        """Ajusta la vista para mostrar todo el contenido con padding derecho"""
+        if self.total_bars <= 0:
+            return
+        self.right_offset = padding_right_bars
+        self._recalc_visible()
+
+    # ====================== INTERACCIÓN ======================
+    def zoom_at_x(self, mouse_x: float, delta: float) -> None:
+        """Zoom centrado en la posición del mouse"""
+        if self.total_bars <= 0:
+            return
+
+        old_spacing = self.bar_spacing
+        old_float_index = self._float_index_at_x(mouse_x)
+
+        factor = 1.18 if delta > 0 else (1.0 / 1.18)
+        self.bar_spacing = _clamp(old_spacing * factor, self.min_bar_spacing, self.max_bar_spacing)
+
+        # Mantener el punto bajo el mouse
+        new_anchor = self.view_x + self.view_w - self.right_offset * self.bar_spacing
+        bars_from_last = self._last_data_index - old_float_index
+        target_x = new_anchor - bars_from_last * self.bar_spacing
+        delta_px = float(mouse_x) - target_x
+        self.right_offset -= delta_px / self.bar_spacing
+
+        self._recalc_visible()
+
+    def pan_by_pixels(self, dx_px: float) -> None:
+        """Desplazamiento horizontal"""
+        if self.total_bars <= 0:
+            return
+        self.right_offset += dx_px / self.bar_spacing
+        self._recalc_visible()
+
+    # ====================== MÉTODOS INTERNOS ======================
     @property
-    def _last_data_index(self) -> int:
-        return self.total_bars - 1
+    def _last_data_index(self) -> float:
+        return self.total_bars - 1.0
 
     def _right_anchor_x(self) -> float:
         return self.view_x + self.view_w - self.right_offset * self.bar_spacing
@@ -87,56 +125,56 @@ class TimeScale:
             return
 
         self.bar_spacing = _clamp(self.bar_spacing, self.min_bar_spacing, self.max_bar_spacing)
-        self.right_offset = max(self.min_right_offset, self.right_offset)
 
         left_float = self._float_index_at_x(self.view_x)
         right_float = self._float_index_at_x(self.view_x + self.view_w)
 
         start_idx = max(0, int(math.floor(min(left_float, right_float))) - 1)
-        end_idx = min(self._last_data_index, int(math.ceil(max(left_float, right_float))) + 1)
+        end_idx = min(self.total_bars - 1, int(math.ceil(max(left_float, right_float))) + 1)
 
         self._visible = VisibleRange(
-            start_ts=self._timestamps[start_idx],
-            end_ts=self._timestamps[end_idx],
+            start_ts=self._timestamps[start_idx] if start_idx < len(self._timestamps) else datetime.min,
+            end_ts=self._timestamps[end_idx] if end_idx < len(self._timestamps) else datetime.min,
             start_idx=start_idx,
             end_idx=end_idx,
         )
 
-    # === Métodos existentes (sin cambios) ===
-    def index_to_x(self, index: int) -> float:
+    # ====================== MÉTODOS PARA DIBUJO ======================
+    def index_to_x(self, index: float) -> float:
+        """Convierte índice (puede ser float) a posición en píxeles"""
         if self.total_bars <= 0:
             return self.view_x
-        bars_from_last = self._last_data_index - int(index)
+        bars_from_last = self._last_data_index - float(index)
         return self._right_anchor_x() - bars_from_last * self.bar_spacing
 
     def x_to_index(self, x: float) -> int:
+        """Convierte posición en píxeles a índice entero"""
         if self.total_bars <= 0:
             return 0
         idx = round(self._float_index_at_x(x))
-        return int(_clamp(idx, 0, self._last_data_index))
+        return int(_clamp(idx, 0, self.total_bars - 1))
 
-    def zoom_at_x(self, mouse_x: float, delta: float) -> None:
-        if self.total_bars <= 0:
-            return
-        old_spacing = self.bar_spacing
-        old_float_index = self._float_index_at_x(mouse_x)
+    def get_px_per_bar(self) -> float:
+        return max(1.0, self.bar_spacing)
 
-        factor = 1.18 if delta > 0 else (1.0 / 1.18)
-        self.bar_spacing = _clamp(old_spacing * factor, self.min_bar_spacing, self.max_bar_spacing)
+    def get_tick_indices(self, min_spacing_px: float, extend_by_one: bool = False) -> List[int]:
+        """Devuelve índices para grid y time axis"""
+        vr = self.get_visible_range()
+        vs = int(vr.start_idx)
+        ve = int(vr.end_idx)
+        if extend_by_one:
+            vs = max(0, vs - 1)
+            ve = min(self.total_bars - 1, ve + 1)
 
-        new_anchor = self.view_x + self.view_w - self.right_offset * self.bar_spacing
-        bars_from_last = self._last_data_index - old_float_index
-        target_x = new_anchor - bars_from_last * self.bar_spacing
+        if self.total_bars <= 0 or ve <= vs:
+            return []
 
-        delta_px = float(mouse_x) - target_x
-        self.right_offset -= delta_px / self.bar_spacing
-        self.right_offset = max(self.min_right_offset, self.right_offset)
+        step = max(1, int(min_spacing_px / self.get_px_per_bar()))
+        return list(range(vs, ve + 1, step))
 
-        self._recalc_visible()
-
-    def pan_by_pixels(self, dx_px: float) -> None:
-        if self.total_bars <= 0:
-            return
-        self.right_offset += dx_px / self.bar_spacing
-        self.right_offset = max(self.min_right_offset, self.right_offset)
-        self._recalc_visible()
+    def get_aligned_x(self, index: int, crisp: bool = True) -> float:
+        """X alineada (usada por velas, grid y time axis)"""
+        x = float(self.index_to_x(index))
+        if crisp:
+            x = math.floor(x) + 0.5
+        return x
