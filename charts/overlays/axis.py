@@ -3,16 +3,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Tuple, List, Optional, Set
 
-<<<<<<< HEAD
-=======
-import math   # ← Añadido para el snap del grid
+import math
 
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
+
 Rect = Tuple[float, float, float, float]
 
 
 # ============================================================
-# PRICE AXIS STYLE
+# PRICE AXIS
 # ============================================================
 @dataclass
 class PriceAxisStyle:
@@ -23,17 +21,9 @@ class PriceAxisStyle:
     tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     decimals: int = 2
     target_major_ticks: int = 12
-    minor_divisions: int = 3
-    label_minor: bool = True
-    min_label_gap_px: float = 5.0
     label_color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     label_scale: float = 1.0
-<<<<<<< HEAD
-=======
-
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
-    edge_dead_zone_factor: float = 0.38
-    label_edge_extra_margin_px: float = 6.0
+    min_label_gap_px: float = 5.0
 
 
 class PriceAxisOverlay:
@@ -50,195 +40,23 @@ class PriceAxisOverlay:
     def _get_side(self) -> str:
         return (self.overlay.config["price_axis"].get("side", "right") or "right").lower()
 
-    def _get_ticks(self) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
-        majors: List[Tuple[float, float]] = []
-        minors: List[Tuple[float, float]] = []
-
-        if hasattr(self.price_scale, "get_ticks_ex"):
-            out = self.price_scale.get_ticks_ex(
-                target_major=self.style.target_major_ticks,
-                minor_divisions=self.style.minor_divisions,
-            )
-            majors = out.get("major", []) or []
-            minors = out.get("minor", []) or []
-        else:
-            majors = self.price_scale.get_ticks(target_count=self.style.target_major_ticks)
-
-        return majors, minors
-
-<<<<<<< HEAD
-    def _build_all_ticks(
-        self,
-        majors: List[Tuple[float, float]],
-        minors: List[Tuple[float, float]],
-    ) -> List[Tuple[float, float, bool, int]]:
-        all_ticks: List[Tuple[float, float, bool, int]] = []
-        idx = 0
-
-        for price, y in majors:
-            all_ticks.append((float(price), float(y), True, idx))
-            idx += 1
-
-        for price, y in minors:
-            all_ticks.append((float(price), float(y), False, idx))
-            idx += 1
-
-        all_ticks.sort(key=lambda t: t[1])
-        return all_ticks
-
-    def _is_inside_tick_clip(self, y: float, plot_y: float, plot_h: float) -> bool:
-        top_clip = plot_y + 2.0
-        bottom_clip = plot_y + plot_h - 2.0
-        return top_clip <= y <= bottom_clip
-
-    def _get_label_vertical_limits(
-        self,
-        ay: float,
-        ah: float,
-        text_h: float,
-    ) -> Tuple[float, float]:
-        extra_margin_px = float(self.style.label_edge_extra_margin_px)
-        edge_dead_zone = text_h * float(self.style.edge_dead_zone_factor)
-        top_limit = ay + edge_dead_zone + extra_margin_px
-        bottom_limit = ay + ah - edge_dead_zone - extra_margin_px
-        return top_limit, bottom_limit
-
-    def _can_draw_label_by_limits(
-        self,
-        y: float,
-        ay: float,
-        ah: float,
-        text_h: float,
-    ) -> bool:
-        top_limit, bottom_limit = self._get_label_vertical_limits(ay, ah, text_h)
-        if y <= top_limit:
-            return False
-        if y >= bottom_limit:
-            return False
-        return True
-
-    def _measure_label(self, label: str) -> Tuple[float, float]:
-        if self.text_renderer is None:
-            text_h = 12.0 * float(self.style.label_scale)
-            text_w = max(10.0, len(label) * 7.0 * float(self.style.label_scale))
-            return text_w, text_h
-        return self.text_renderer.measure_text(label, scale=self.style.label_scale)
-
-    def _compute_visible_label_tick_ids(
-        self,
-        all_ticks: List[Tuple[float, float, bool, int]],
-        majors: List[Tuple[float, float]],
-        ay: float,
-        ah: float,
-    ) -> Set[int]:
-        visible_ids: Set[int] = set()
-        last_label_text_y: Optional[float] = None
-
-        if self.style.label_minor:
-            candidates = all_ticks
-        else:
-            major_set = {(float(p), float(y)) for p, y in majors}
-            candidates = [item for item in all_ticks if (item[0], item[1]) in major_set and item[2]]
-
-        for price, y, _is_major, source_index in candidates:
-            label = f"{price:.{self.style.decimals}f}"
-            _text_w, text_h = self._measure_label(label)
-
-            if not self._can_draw_label_by_limits(y, ay, ah, text_h):
-                continue
-
-            text_y = y + text_h * 0.30
-
-            if (
-                last_label_text_y is not None
-                and abs(text_y - last_label_text_y) < self.style.min_label_gap_px
-            ):
-                continue
-
-            visible_ids.add(source_index)
-            last_label_text_y = text_y
-
-        return visible_ids
-
-=======
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
         ax, ay, aw, ah = layout.price_axis_rect
 
-        if aw <= 0 or ah <= 0 or plot_w <= 0 or plot_h <= 0:
+        if aw <= 0 or ah <= 0:
             return
 
         side = self._get_side()
-        majors, minors = self._get_ticks()
-        all_ticks = self._build_all_ticks(majors, minors)
+        ticks = self.price_scale.get_ticks_ex(target_major=self.style.target_major_ticks)
 
-        if self.text_renderer is not None:
-            visible_label_tick_ids = self._compute_visible_label_tick_ids(
-                all_ticks=all_ticks,
-                majors=majors,
-                ay=ay,
-                ah=ah,
-            )
-        else:
-<<<<<<< HEAD
-            visible_label_tick_ids = {
-                source_index
-                for _, y, _, source_index in all_ticks
-                if self._is_inside_tick_clip(y, plot_y, plot_h)
-            }
-
-        for _price, yy, is_major, source_index in all_ticks:
-=======
-            visible_label_tick_ids = {source_index for _, y, _, source_index in all_ticks
-                                      if self._is_inside_tick_clip(y, plot_y, plot_h)}
-
-        # Ticks menores
-        for price, yy, is_major, source_index in all_ticks:
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
-            if is_major:
-                continue
-            y = float(yy)
-            if not self._is_inside_tick_clip(y, plot_y, plot_h):
-                continue
-<<<<<<< HEAD
-
-=======
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
-            if self.style.label_minor and source_index not in visible_label_tick_ids:
+        for price, y in ticks.get("major", []):
+            y = float(y)
+            if not (plot_y <= y <= plot_y + plot_h):
                 continue
 
-            if side == "left":
-                x1 = ax + aw - self.style.tick_minor_len
-                x2 = ax + aw
-            else:
-                x1 = ax
-                x2 = ax + self.style.tick_minor_len
-
-<<<<<<< HEAD
-            r.draw_line_px(
-                x1, y,
-                x2, y,
-                color=self.style.tick_color,
-                width=float(self.style.tick_width),
-            )
-
-        for _price, yy, is_major, source_index in all_ticks:
-=======
-            r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=float(self.style.tick_width))
-
-        # Ticks mayores
-        for price, yy, is_major, source_index in all_ticks:
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
-            if not is_major:
-                continue
-            y = float(yy)
-            if not self._is_inside_tick_clip(y, plot_y, plot_h):
-                continue
-            if source_index not in visible_label_tick_ids:
-                continue
-
+            # Tick
             if side == "left":
                 x1 = ax + aw - self.style.tick_major_len
                 x2 = ax + aw
@@ -246,58 +64,15 @@ class PriceAxisOverlay:
                 x1 = ax
                 x2 = ax + self.style.tick_major_len
 
-<<<<<<< HEAD
-            r.draw_line_px(
-                x1, y,
-                x2, y,
-                color=self.style.tick_color,
-                width=float(self.style.tick_width),
-            )
+            r.draw_line_px(x1, y, x2, y,
+                           color=self.style.tick_color,
+                           width=float(self.style.tick_width))
 
-        if self.text_renderer is not None:
-            r.flush()
-
-=======
-            r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=float(self.style.tick_width))
-
-        # Grid horizontal
-        every = max(1, int(self.style.grid_every_n_minor_ticks))
-        for idx, (_price, y, is_major, _source_index) in enumerate(all_ticks):
-            if not self._is_inside_tick_clip(y, plot_y, plot_h):
-                continue
-            if not (is_major or (idx % every == 0)):
-                continue
-
-            color = self.style.grid_major_color if is_major else self.style.grid_minor_color
-            width = self.style.grid_major_width if is_major else self.style.grid_minor_width
-
-            r.draw_line_px(plot_x, y, plot_x + plot_w, y, color=color, width=float(width))
-
-        # Labels
-        if self.text_renderer is not None:
-            r.flush()
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
-            if self.style.label_minor:
-                label_candidates = all_ticks
-            else:
-                major_set = {(float(p), float(y)) for p, y in majors}
-                label_candidates = [item for item in all_ticks if (item[0], item[1]) in major_set and item[2]]
-
-            for price, y, _is_major, source_index in label_candidates:
-                if source_index not in visible_label_tick_ids:
-                    continue
-
+            # Label
+            if self.text_renderer is not None:
                 label = f"{price:.{self.style.decimals}f}"
-<<<<<<< HEAD
-                text_w, text_h = self.text_renderer.measure_text(
-                    label,
-                    scale=self.style.label_scale,
-                )
-
-=======
                 text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
-                text_y = y + text_h * 0.30
+                text_y = y + text_h * 0.3
 
                 if side == "left":
                     text_x = ax + aw - self.style.padding_px - text_w
@@ -305,120 +80,29 @@ class PriceAxisOverlay:
                     text_x = ax + self.style.tick_major_len + self.style.padding_px
 
                 text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
-                text_y = max(ay + text_h, min(text_y, ay + ah - 2.0))
-
                 self.text_renderer.render_text(
-                    label, text_x, text_y, scale=self.style.label_scale, color=self.style.label_color
+                    label, text_x, text_y,
+                    scale=self.style.label_scale,
+                    color=self.style.label_color
                 )
-
-    # ====================== MÉTODOS AUXILIARES (sin cambios importantes) ======================
-    def _build_all_ticks(self, majors, minors):
-        all_ticks: List[Tuple[float, float, bool, int]] = []
-        idx = 0
-        for price, y in majors:
-            all_ticks.append((float(price), float(y), True, idx))
-            idx += 1
-        for price, y in minors:
-            all_ticks.append((float(price), float(y), False, idx))
-            idx += 1
-        all_ticks.sort(key=lambda t: t[1])
-        return all_ticks
-
-    def _is_inside_tick_clip(self, y: float, plot_y: float, plot_h: float) -> bool:
-        top_clip = plot_y + 2.0
-        bottom_clip = plot_y + plot_h - 2.0
-        return top_clip <= y <= bottom_clip
-
-    def _get_label_vertical_limits(self, ay: float, ah: float, text_h: float) -> Tuple[float, float]:
-        extra_margin_px = float(self.style.label_edge_extra_margin_px)
-        edge_dead_zone = text_h * float(self.style.edge_dead_zone_factor)
-        top_limit = ay + edge_dead_zone + extra_margin_px
-        bottom_limit = ay + ah - edge_dead_zone - extra_margin_px
-        return top_limit, bottom_limit
-
-    def _can_draw_label_by_limits(self, y: float, ay: float, ah: float, text_h: float) -> bool:
-        top_limit, bottom_limit = self._get_label_vertical_limits(ay, ah, text_h)
-        if y <= top_limit or y >= bottom_limit:
-            return False
-        return True
-
-    def _measure_label(self, label: str) -> Tuple[float, float]:
-        if self.text_renderer is None:
-            text_h = 12.0 * float(self.style.label_scale)
-            text_w = max(10.0, len(label) * 7.0 * float(self.style.label_scale))
-            return text_w, text_h
-        return self.text_renderer.measure_text(label, scale=self.style.label_scale)
-
-    def _compute_visible_label_tick_ids(self, all_ticks, majors, ay, ah) -> Set[int]:
-        visible_ids: Set[int] = set()
-        last_label_text_y: Optional[float] = None
-
-        if self.style.label_minor:
-            candidates = all_ticks
-        else:
-            major_set = {(float(p), float(y)) for p, y in majors}
-            candidates = [item for item in all_ticks if (item[0], item[1]) in major_set and item[2]]
-
-        for price, y, _is_major, source_index in candidates:
-            label = f"{price:.{self.style.decimals}f}"
-            text_w, text_h = self._measure_label(label)
-
-            if not self._can_draw_label_by_limits(y, ay, ah, text_h):
-                continue
-
-            text_y = y + text_h * 0.30
-
-            if last_label_text_y is not None and abs(text_y - last_label_text_y) < self.style.min_label_gap_px:
-                continue
-
-            visible_ids.add(source_index)
-            last_label_text_y = text_y
-
-        return visible_ids
 
 
 # ============================================================
-# TIME AXIS STYLE
+# TIME AXIS
 # ============================================================
 @dataclass
 class TimeAxisStyle:
-<<<<<<< HEAD
-=======
     padding_px: float = 6.0
-
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
     tick_len: float = 6.0
     tick_width: float = 1.0
     tick_color: Tuple[float, float, float, float] = (0.60, 0.60, 0.60, 0.9)
-
     min_label_spacing_px: float = 90.0
-    format_compact: bool = True
-
     label_color: Tuple[float, float, float, float] = (0.88, 0.88, 0.88, 1.0)
     label_scale: float = 1.0
-
     crisp_ticks: bool = True
-    left_clip_margin_px: float = 12.0
-    right_clip_margin_px: float = 12.0
 
-<<<<<<< HEAD
 
 class TimeAxisOverlay:
-    """
-    Dibuja ticks y labels del eje de tiempo.
-    Importante:
-    - Usa la misma lógica de ticks que GridOverlay.
-    - Usa la misma X alineada que GridOverlay y CandleSeries.
-    - Usa el rectángulo de time axis calculado por ChartOverlay.
-    """
-
-=======
-# ============================================================
-# OVERLAY DEL EJE DE TIEMPO (GRID CORREGIDO)
-# ============================================================
-
-class TimeAxisOverlay:
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
     def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.time_scale = time_scale
@@ -429,21 +113,6 @@ class TimeAxisOverlay:
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
 
-    def _get_tick_indices(self) -> List[int]:
-        return self.time_scale.get_tick_indices(
-            min_spacing_px=self.style.min_label_spacing_px,
-            extend_by_one=False,
-        )
-
-    def _get_time_x_limits(self, ax: float, aw: float) -> Tuple[float, float]:
-        left_limit = ax + float(self.style.left_clip_margin_px)
-        right_limit = ax + aw - float(self.style.right_clip_margin_px)
-        return left_limit, right_limit
-
-    def _is_time_x_inside_limits(self, x: float, ax: float, aw: float) -> bool:
-        left_limit, right_limit = self._get_time_x_limits(ax, aw)
-        return left_limit <= x <= right_limit
-
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
         ax, ay, aw, ah = layout.time_axis_rect
@@ -451,81 +120,39 @@ class TimeAxisOverlay:
         if aw <= 0 or ah <= 0:
             return
 
-        tick_indices = self._get_tick_indices()
-        if not tick_indices:
-            return
-
-        text_items: List[Tuple[float, str]] = []
+        tick_indices = self.time_scale.get_tick_indices(
+            min_spacing_px=self.style.min_label_spacing_px,
+            extend_by_one=False
+        )
 
         for i in tick_indices:
             if i >= len(self.time_scale._timestamps):
                 break
 
-<<<<<<< HEAD
             x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_ticks)
 
-            if not self._is_time_x_inside_limits(x, ax, aw):
-                continue
-=======
-            x = float(self.time_scale.index_to_x(i))
-            x = math.floor(x) + 0.5          # ← CLAVE: mismo snap que las velas
-
-            if self.style.gridline_in_plot:
-                r.draw_line_px(
-                    x, plot_y, x, plot_y + plot_h,
-                    color=self.style.grid_major_color,
-                    width=float(self.style.grid_major_width),
-                )
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
-
+            # Tick
             y1 = ay
             y2 = ay + self.style.tick_len
+            r.draw_line_px(x, y1, x, y2,
+                           color=self.style.tick_color,
+                           width=float(self.style.tick_width))
 
-            r.draw_line_px(
-<<<<<<< HEAD
-                x, y1,
-                x, y2,
-=======
-                x, y1, x, y2,
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
-                color=self.style.tick_color,
-                width=float(self.style.tick_width),
-            )
-
+            # Label
             if self.text_renderer is not None:
-                text_items.append((x, self._format_time(self.time_scale._timestamps[i])))
-
-        if self.text_renderer is not None and text_items:
-            r.flush()
-
-            left_limit, right_limit = self._get_time_x_limits(ax, aw)
-
-            for x, label in text_items:
-<<<<<<< HEAD
-                text_w, text_h = self.text_renderer.measure_text(
-                    label,
-                    scale=self.style.label_scale,
-                )
-=======
+                label = self.time_scale._timestamps[i].strftime("%H:%M")
                 text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                if text_x < left_limit:
+                # Evitar que se salga de los límites
+                if text_x < ax:
                     continue
-                if text_x + text_w > right_limit:
+                if text_x + text_w > ax + aw:
                     continue
-
-                text_y = max(ay + text_h, min(text_y, ay + ah - 2.0))
 
                 self.text_renderer.render_text(
                     label, text_x, text_y,
                     scale=self.style.label_scale,
-                    color=self.style.label_color,
+                    color=self.style.label_color
                 )
-
-    def _format_time(self, ts: datetime) -> str:
-        if self.style.format_compact:
-            return ts.strftime("%H:%M")
-        return ts.strftime("%Y-%m-%d %H:%M")

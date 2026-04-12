@@ -11,123 +11,45 @@ from render.renderer import Renderer2D
 
 @dataclass
 class CandleStyle:
-    """
-    Estilo visual y comportamiento de las velas japonesas.
-    
-    Todos los valores están en píxeles y son configurables.
-    """
-    # Colores
-    up_color: Tuple[float, float, float, float] = (0.15, 0.80, 0.15, 1.0)   # Vela alcista (verde)
-    down_color: Tuple[float, float, float, float] = (1.0, 0.10, 0.10, 1.0) # Vela bajista (rojo)
+    """Acepta todos los parámetros que window.py le pasa"""
+    up_color: Tuple[float, float, float, float] = (0.15, 0.80, 0.15, 1.0)
+    down_color: Tuple[float, float, float, float] = (1.0, 0.10, 0.10, 1.0)
 
-    # Grosor de líneas
-    wick_width_px: float = 1.0      # Grosor de las mechas (wick)
-    border_width_px: float = 1.0    # Grosor del borde del cuerpo
+    wick_width_px: float = 1.2
+    border_width_px: float = 1.0
 
-    # Tamaño de la vela
     min_width_px: float = 0.8
     max_width_px: float = 120.0
 
-    # Espaciado entre velas
-    min_gap_px: float = 1.2
-    max_gap_px: float = 50.0
-    gap_extra_px: float = 0.0           # Espacio extra fijo
-    candle_width_extra_px: float = 0.0  # Ancho extra fijo
-
-    # Control dinámico del gap según el zoom
-    gap_base_px: float = 2.0
-    gap_growth_per_px: float = 0.04
-    gap_transition_start_px: float = 20.0
-    gap_transition_softness_px: float = 25.0
-
-    min_body_height_px: float = 1.0     # Altura mínima del cuerpo (evita velas invisibles)
-
-    # Opciones de dibujo
-    draw_borders: bool = True
-    clip_to_plot: bool = False
-    min_gap_px: float = 1.0
-    max_gap_px: float = 40.0
-
-    # === PARÁMETROS FÁCILES ===
-    candle_body_ratio: float = 0.72      # ← 0.68 = gap más grande | 0.78 = gap más pequeño
+    gap_extra_px: float = 5.5
     candle_width_extra_px: float = 4.0
+    gap_base_px: float = 1.6
+    gap_growth_per_px: float = 0.055
+    gap_transition_start_px: float = 24.0
+    gap_transition_softness_px: float = 38.0
+    min_gap_px: float = 1.1
+    max_gap_px: float = 45.0
 
-    clip_to_plot: bool = True
-    snap_x_to_half_pixel: bool = True
+    candle_body_ratio: float = 0.72
     draw_borders: bool = False
-
-    # ←←← NUEVO: Desplazamiento horizontal de las velas
-    # Útil para alinear mejor el centro de la vela con las líneas verticales del grid.
-    # Valor recomendado: 0.5 o 1.0
+    clip_to_plot: bool = True
     x_offset_px: float = 0.0
 
-class CandleSeries:
-    """Serie principal de velas japonesas (OHLC)."""
 
+class CandleSeries:
     def __init__(self, data: List[OHLC], style: Optional[CandleStyle] = None) -> None:
         self.data = data
         self.style = style or CandleStyle()
 
-    def __len__(self) -> int:
-        return len(self.data)
-
     def get_high_low(self, i: int) -> Tuple[float, float]:
-        """Devuelve el high y low de la vela en el índice i (usado por autoscale)."""
         d = self.data[i]
         return d.h, d.l
 
-    def _compute_bar_width_and_gap(self, bar_spacing: float) -> Tuple[float, float]:
-        """
-        Calcula el ancho real de la vela y el gap entre velas.
-        
-        Este cálculo es dinámico según el zoom (bar_spacing).
-        """
-        st = self.style
-
-        # Gap dinámico con transición suave
-        if bar_spacing <= st.gap_transition_start_px:
-            gap = st.gap_base_px
-        else:
-            softness = max(1.0, st.gap_transition_softness_px)
-            t = min(1.0, (bar_spacing - st.gap_transition_start_px) / softness)
-            extra = (bar_spacing - st.gap_transition_start_px) * st.gap_growth_per_px
-            gap = st.gap_base_px * (1.0 - t) + (st.gap_base_px + extra) * t
-
-        # Aplicar límites y extras
-        gap = max(st.min_gap_px, min(st.max_gap_px, gap + st.gap_extra_px))
     def _compute_bar_width(self, bar_spacing: float) -> float:
-        """Fórmula proporcional profesional (evita solapamiento en zoom in)"""
         st = self.style
-
-        # Ancho de la vela proporcional al espacio total
-        candle_width = bar_spacing * st.candle_body_ratio
-        candle_width += st.candle_width_extra_px
-
-        # Seguridad: nunca puede ser más ancho que el espacio disponible
-        candle_width = min(candle_width, bar_spacing * 0.95)
-        candle_width = max(st.min_width_px, candle_width)
-
-        # Gap = resto
-        gap = bar_spacing - candle_width
-        gap = max(st.min_gap_px, min(st.max_gap_px, gap))
-
-        final_width = candle_width
-
-        # Redondeo a medio píxel para máxima nitidez y sincronía con el grid
-        bar_width = math.floor(bar_width * 2.0) / 2.0
-
-        return bar_width, gap
-
-        if st.snap_x_to_half_pixel:
-            final_width = math.floor(final_width * 2.0) / 2.0
-
-        return final_width
-
-    def _get_vertical_clip(self, price_scale: PriceScale) -> Tuple[float, float]:
-        if hasattr(price_scale, "_usable_bounds"):
-            y0, y1, _ = price_scale._usable_bounds()
-            return min(y0, y1), max(y0, y1)
-        return price_scale.view_y, price_scale.view_y + price_scale.view_h
+        width = bar_spacing * st.candle_body_ratio + st.candle_width_extra_px
+        width = max(st.min_width_px, min(width, bar_spacing * 0.95))
+        return math.floor(width * 2.0) / 2.0
 
     def draw(
         self,
@@ -137,26 +59,12 @@ class CandleSeries:
         visible_start: int,
         visible_end: int,
     ) -> None:
-        """
-        Dibuja todas las velas visibles en el gráfico.
-        
-        Aquí se realiza el posicionamiento completo de cada vela:
-        - Posición X → TimeScale
-        - Posición Y → PriceScale
-        - Ancho     → _compute_bar_width_and_gap()
-        """
         if visible_end < visible_start or not self.data:
             return
 
         st = self.style
         bar_spacing = time_scale.bar_spacing
-
-        # Calculamos ancho y gap una sola vez por frame
-        bar_width, _ = self._compute_bar_width_and_gap(bar_spacing)
-
-        # Límites horizontales de la vista (para optimizar)
-        view_left = time_scale.view_x
-        view_right = time_scale.view_x + time_scale.view_w
+        bar_width = self._compute_bar_width(bar_spacing)
 
         for i in range(visible_start, visible_end + 1):
             if i < 0 or i >= len(self.data):
@@ -164,73 +72,36 @@ class CandleSeries:
 
             d = self.data[i]
 
-            # ====================== POSICIONAMIENTO HORIZONTAL ======================
-            # Obtenemos la posición X centrada de la vela (ya alineada con el grid)
-            x_center = time_scale.get_aligned_x(i, crisp=True)
+            # ←←← CENTRO EXACTO (misma posición que la línea del grid)
+            x_center = time_scale.get_aligned_x(i, crisp=True) + st.x_offset_px
 
-            # ←←← APLICAMOS EL OFFSET PARA MOVER LAS VELAS A LA DERECHA
-            # Esto es exactamente lo que pediste: mover la vela un poquito a la derecha
-            # para que quede mejor alineada con las líneas verticales del grid.
-            x_center += st.x_offset_px
-
-            # ====================== VISIBILIDAD ======================
             half = bar_width / 2.0
-            half = bar_width / 2.0 + 2.0
-            if x_center + half < view_left or x_center - half > view_right:
+            left = math.floor(x_center - half)          # snap idéntico al grid
+
+            # Clip rápido
+            if left + bar_width < time_scale.view_x or left > time_scale.view_x + time_scale.view_w:
                 continue
 
-            # ====================== POSICIONAMIENTO VERTICAL ======================
             y_o = price_scale.price_to_y(d.o)
             y_c = price_scale.price_to_y(d.c)
             y_h = price_scale.price_to_y(d.h)
             y_l = price_scale.price_to_y(d.l)
 
-            # ====================== DIBUJO ======================
-            candle_top = min(y_h, y_l, y_o, y_c)
-            candle_bottom = max(y_h, y_l, y_o, y_c)
-
-            if candle_bottom < clip_top or candle_top > clip_bottom:
-                continue
-
-            if st.clip_to_plot:
-                y_o = max(clip_top, min(clip_bottom, y_o))
-                y_c = max(clip_top, min(clip_bottom, y_c))
-                y_h = max(clip_top, min(clip_bottom, y_h))
-                y_l = max(clip_top, min(clip_bottom, y_l))
-
             is_up = d.c >= d.o
             color = st.up_color if is_up else st.down_color
 
-            left = x_center - bar_width / 2.0
-            body_top = min(y_o, y_c)
-            body_bottom = max(y_o, y_c)
-            body_height = max(1.0, body_bottom - body_top)
-
-            # Mecha (wick)
-            renderer.draw_line_px(
-                x_center, y_h,
-                x_center, y_l,
-                color=color,
-                width=st.wick_width_px,
-            )
-
-            # Cuerpo de la vela
+            # Mecha (siempre centrada)
             renderer.draw_line_px(x_center, y_h, x_center, y_l, color, st.wick_width_px)
 
-            if body_height > 0.0:
-                if st.draw_borders and st.border_width_px > 0:
-                    border_color = (0.0, 0.0, 0.0, 0.9) if is_up else (0.2, 0.2, 0.2, 0.9)
-                    renderer.draw_rect_px(
-                        left - st.border_width_px,
-                        body_top - st.border_width_px,
-                        bar_width + 2 * st.border_width_px,
-                        body_height + 2 * st.border_width_px,
-                        border_color,
-                    )
+            # Cuerpo de la vela
+            body_top = min(y_o, y_c)
+            body_bottom = max(y_o, y_c)
+            body_h = max(1.0, body_bottom - body_top)
 
-                renderer.draw_rect_px(
-                    left, body_top,
-                    bar_width, body_height,
-                    color
-                )
-                renderer.draw_rect_px(left, body_top, bar_width, body_height, color)
+            if body_h > 0.0:
+                renderer.draw_rect_px(left, body_top, bar_width, body_h, color)
+
+            if st.draw_borders:
+                border_col = (0.0, 0.0, 0.0, 0.9) if is_up else (0.3, 0.3, 0.3, 0.9)
+                renderer.draw_line_px(left, body_top, left + bar_width, body_top, border_col, 1.0)
+                renderer.draw_line_px(left, body_bottom, left + bar_width, body_bottom, border_col, 1.0)

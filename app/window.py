@@ -43,16 +43,11 @@ class GLFWWindow:
         self.input = InputState()
         self.text_renderer: TextRenderer | None = None
 
-<<<<<<< HEAD
-        self.gap_extra_px = 7.0
-        self.candle_width_extra_px = 5.0
-        self.base_candle_width_px = 11.0
-=======
         # ==================== PARÁMETROS VISUALES ====================
-        self.candle_body_ratio = 0.72          # ← Gap más grande (0.68 = aún más gap)
+        self.gap_extra_px = 7.0
         self.candle_width_extra_px = 4.0
         self.base_candle_width_px = 12.0
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
+        self.candle_body_ratio = 0.72
 
         self._drag_mode: str | None = None
         self._price_manual_mode: bool = False
@@ -67,15 +62,9 @@ class GLFWWindow:
         self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)
         
         self.time_scale = TimeScale(
-<<<<<<< HEAD
             bar_spacing=self.base_candle_width_px + self.gap_extra_px + self.candle_width_extra_px,
-            right_offset=0.0,
-            min_bar_spacing=4.0,
-=======
-            bar_spacing=self.base_candle_width_px + 8.0,
             right_offset=8.0,
             min_bar_spacing=3.0,
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
             max_bar_spacing=300.0,
         )
 
@@ -100,7 +89,6 @@ class GLFWWindow:
             initial_data = make_fake_ohlc(400, start_price=100.0, volatility=1.2, seed=7)
 
         style = CandleStyle(
-<<<<<<< HEAD
             gap_extra_px=5.5,
             candle_width_extra_px=4.0,
             gap_base_px=1.6,
@@ -112,12 +100,8 @@ class GLFWWindow:
             min_width_px=0.7,
             max_width_px=115.0,
             draw_borders=True,
-=======
             candle_body_ratio=self.candle_body_ratio,
-            candle_width_extra_px=self.candle_width_extra_px,
-            draw_borders=False,
             clip_to_plot=True,
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
         )
 
         self.series = CandleSeries(initial_data, style=style)
@@ -143,18 +127,6 @@ class GLFWWindow:
         self.grid_overlay = None
         self.tooltip_overlay: TooltipOverlay | None = None
 
-<<<<<<< HEAD
-=======
-        self.chart.add_series(self.series, pane_name="main")
-        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.price_axis_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.time_axis_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
-
-    # ====================== EL RESTO DEL ARCHIVO (sin cambios) ======================
-    # (init, callbacks, update, render, etc.)
-
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
     def init(self) -> None:
         if not glfw.init():
             raise RuntimeError("No se pudo inicializar GLFW")
@@ -183,6 +155,7 @@ class GLFWWindow:
         )
         self.text_renderer.init_gl()
 
+        # Crear overlays
         self.price_axis_overlay = PriceAxisOverlay(self.chart_overlay, self.price_scale)
         self.time_axis_overlay = TimeAxisOverlay(self.chart_overlay, self.time_scale)
         self.crosshair_overlay = CrosshairOverlay(self.chart_overlay, self.input, self.series)
@@ -202,6 +175,7 @@ class GLFWWindow:
         self.price_axis_overlay.text_renderer = self.text_renderer
         self.time_axis_overlay.text_renderer = self.text_renderer
 
+        # Añadir todo al chart
         self.chart.add_series(self.series, pane_name="main")
         self.chart.add_overlay(self.grid_overlay, layer="base", pane_name="main")
         self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
@@ -210,8 +184,7 @@ class GLFWWindow:
         self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
         self.chart.add_overlay(self.tooltip_overlay, layer="front", pane_name="main")
 
-<<<<<<< HEAD
-=======
+        # Callbacks
         glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
         glfw.set_mouse_button_callback(self.window, self._on_mouse_button)
         glfw.set_scroll_callback(self.window, self._on_scroll)
@@ -219,7 +192,6 @@ class GLFWWindow:
 
         self._update_layout_scales(fb_w, fb_h)
 
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
         if self.live_mode:
             self.live_feed = BinanceWSFeed(
                 symbol=self.live_symbol,
@@ -228,17 +200,6 @@ class GLFWWindow:
             )
             self.live_feed.start()
 
-<<<<<<< HEAD
-        glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
-        glfw.set_mouse_button_callback(self.window, self._on_mouse_button)
-        glfw.set_scroll_callback(self.window, self._on_scroll)
-        glfw.set_framebuffer_size_callback(self.window, self._on_resize)
-
-        self._update_layout_scales(fb_w, fb_h)
-
-=======
-    # (el resto del archivo es idéntico al que tenías antes)
->>>>>>> b0be6c6188b9385e9a1c80a593ef132cd9e9df3e
     def _on_resize(self, window, width: int, height: int) -> None:
         fb_w, fb_h = glfw.get_framebuffer_size(window)
         self._update_layout_scales(fb_w, fb_h)
