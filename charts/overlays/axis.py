@@ -21,7 +21,7 @@ class PriceAxisStyle:
     tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     decimals: int = 2
     target_major_ticks: int = 12
-    label_color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+    label_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     label_scale: float = 1.0
     min_label_gap_px: float = 5.0
 
@@ -95,9 +95,9 @@ class TimeAxisStyle:
     padding_px: float = 6.0
     tick_len: float = 6.0
     tick_width: float = 1.0
-    tick_color: Tuple[float, float, float, float] = (0.60, 0.60, 0.60, 0.9)
+    tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     min_label_spacing_px: float = 90.0
-    label_color: Tuple[float, float, float, float] = (0.88, 0.88, 0.88, 1.0)
+    label_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     label_scale: float = 1.0
     crisp_ticks: bool = True
 
@@ -120,16 +120,22 @@ class TimeAxisOverlay:
         if aw <= 0 or ah <= 0:
             return
 
+        # Usamos extend_by_one=True para que las etiquetas entren/salgan suavemente
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.min_label_spacing_px,
-            extend_by_one=False
+            extend_by_one=True
         )
+
+        # Adaptamos el formato según el zoom (velas muy pequeñas → mostramos segundos)
+        bar_spacing = self.time_scale.bar_spacing
+        show_seconds = bar_spacing < 9.0
 
         for i in tick_indices:
             if i >= len(self.time_scale._timestamps):
-                break
+                continue
 
-            x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_ticks)
+            # Misma posición exacta que velas y grid
+            x = self.time_scale.get_aligned_x(i, crisp=True)
 
             # Tick
             y1 = ay
@@ -140,19 +146,18 @@ class TimeAxisOverlay:
 
             # Label
             if self.text_renderer is not None:
-                label = self.time_scale._timestamps[i].strftime("%H:%M")
+                ts = self.time_scale._timestamps[i]
+                label = ts.strftime("%H:%M:%S" if show_seconds else "%H:%M")
+
                 text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                # Evitar que se salga de los límites
-                if text_x < ax:
-                    continue
-                if text_x + text_w > ax + aw:
-                    continue
-
-                self.text_renderer.render_text(
-                    label, text_x, text_y,
-                    scale=self.style.label_scale,
-                    color=self.style.label_color
-                )
+                # Clipping muy permisivo → las etiquetas aparecen/desaparecen suavemente
+                label_center = text_x + text_w * 0.5
+                if ax - 50 <= label_center <= ax + aw + 50:
+                    self.text_renderer.render_text(
+                        label, text_x, text_y,
+                        scale=self.style.label_scale,
+                        color=self.style.label_color
+                    )

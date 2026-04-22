@@ -63,10 +63,39 @@ class ChartOverlay:
             price_axis_rect=price_rect,
             time_axis_rect=time_rect,
         )
-
     def draw(self, renderer) -> None:
         layout = self.get_layout()
-        # Fondo de ejes (opcional)
-        if self.config["colors"].get("axis_band"):
-            renderer.draw_rect_px(*layout.price_axis_rect, color=self.config["colors"]["axis_band"])
-            renderer.draw_rect_px(*layout.time_axis_rect, color=self.config["colors"]["axis_band"])
+        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
+        pa_x, pa_y, pa_w, pa_h = layout.price_axis_rect
+        ta_x, ta_y, ta_w, ta_h = layout.time_axis_rect
+
+        # Fondo sutil de los ejes
+        axis_band = self.config["colors"].get("axis_band", (0.085, 0.085, 0.085, 0.97))
+        if pa_w > 0:
+            renderer.draw_rect_px(pa_x, pa_y, pa_w, pa_h, axis_band)
+        if ta_w > 0:
+            renderer.draw_rect_px(ta_x, ta_y, ta_w, ta_h, axis_band)
+
+        # === LÍNEAS DELGADAS DE SEPARACIÓN (esto es lo que realmente quieres) ===
+        separator_color = (0.32, 0.32, 0.32, 1.0)
+        separator_width = 1.0
+
+        # Línea vertical entre el chart y el price axis
+        if pa_w > 0:
+            renderer.draw_line_px(
+                plot_x + plot_w, plot_y,
+                plot_x + plot_w, plot_y + plot_h,
+                color=separator_color, width=separator_width
+            )
+
+        # Línea horizontal entre el chart y el time axis
+        if ta_h > 0:
+            renderer.draw_line_px(
+                plot_x, plot_y + plot_h,
+                plot_x + plot_w, plot_y + plot_h,
+                color=separator_color, width=separator_width
+            )
+
+        # Rellenamos la esquina inferior derecha (evita el hueco negro)
+        if pa_w > 0 and ta_h > 0:
+            renderer.draw_rect_px(pa_x, ta_y, pa_w, ta_h, axis_band)

@@ -175,14 +175,18 @@ class GLFWWindow:
         self.price_axis_overlay.text_renderer = self.text_renderer
         self.time_axis_overlay.text_renderer = self.text_renderer
 
-        # Añadir todo al chart
+        # ==================== AÑADIR AL CHART - ORDEN CORRECTO DE DIBUJO ====================
         self.chart.add_series(self.series, pane_name="main")
-        self.chart.add_overlay(self.grid_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.price_axis_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.time_axis_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.tooltip_overlay, layer="front", pane_name="main")
+
+        # Layer "base" → se dibujan ANTES de las velas
+        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")   # fondo de ejes (axis_band)
+        self.chart.add_overlay(self.grid_overlay,    layer="base", pane_name="main")   # grid (detrás de las velas)
+
+        # Layer "front" → se dibujan DESPUÉS de las velas
+        self.chart.add_overlay(self.price_axis_overlay, layer="front", pane_name="main")
+        self.chart.add_overlay(self.time_axis_overlay,  layer="front", pane_name="main")
+        self.chart.add_overlay(self.crosshair_overlay,  layer="front", pane_name="main")
+        self.chart.add_overlay(self.tooltip_overlay,    layer="front", pane_name="main")
 
         # Callbacks
         glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
@@ -200,15 +204,13 @@ class GLFWWindow:
             )
             self.live_feed.start()
 
+    # ... (el resto del archivo queda exactamente igual) ...
     def _on_resize(self, window, width: int, height: int) -> None:
         fb_w, fb_h = glfw.get_framebuffer_size(window)
         self._update_layout_scales(fb_w, fb_h)
         if self.text_renderer is not None:
             self.text_renderer.update_projection(fb_w, fb_h)
 
-    # ============================================================
-    # RECTÁNGULOS DE LAYOUT
-    # ============================================================
     def _chart_rect(self) -> tuple[float, float, float, float]:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         chart_w = max(1.0, fb_w - self._price_axis_width_px)
@@ -307,7 +309,6 @@ class GLFWWindow:
             elif self._drag_mode == "price-scale" and abs(self.input.mouse.dy) > 0.0:
                 self.price_scale.scale_to(self.input.mouse.y)
 
-        # Autoscale de precio (solo si no está en modo manual)
         vr = self.time_scale.get_visible_range()
         if not self._price_manual_mode and vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             self.price_scale.autoscale_from_provider(

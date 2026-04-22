@@ -802,84 +802,12 @@ class PriceAxisOverlay:
 
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
-        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
-        ax, ay, aw, ah = layout.price_axis_rect
-
-        if aw <= 0 or ah <= 0:
-            return
-
-        side = self._get_side()
-        ticks = self.price_scale.get_ticks_ex(target_major=self.style.target_major_ticks)
-
-        for price, y in ticks.get("major", []):
-            y = float(y)
-            if not (plot_y <= y <= plot_y + plot_h):
-                continue
-
-            # Tick
-            if side == "left":
-                x1 = ax + aw - self.style.tick_major_len
-                x2 = ax + aw
-            else:
-                x1 = ax
-                x2 = ax + self.style.tick_major_len
-
-            r.draw_line_px(x1, y, x2, y,
-                           color=self.style.tick_color,
-                           width=float(self.style.tick_width))
-
-            # Label
-            if self.text_renderer is not None:
-                label = f"{price:.{self.style.decimals}f}"
-                text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
-                text_y = y + text_h * 0.3
-
-                if side == "left":
-                    text_x = ax + aw - self.style.padding_px - text_w
-                else:
-                    text_x = ax + self.style.tick_major_len + self.style.padding_px
-
-                text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
-                self.text_renderer.render_text(
-                    label, text_x, text_y,
-                    scale=self.style.label_scale,
-                    color=self.style.label_color
-                )
-
-
-# ============================================================
-# TIME AXIS
-# ============================================================
-@dataclass
-class TimeAxisStyle:
-    padding_px: float = 6.0
-    tick_len: float = 6.0
-    tick_width: float = 1.0
-    tick_color: Tuple[float, float, float, float] = (0.60, 0.60, 0.60, 0.9)
-    min_label_spacing_px: float = 90.0
-    label_color: Tuple[float, float, float, float] = (0.88, 0.88, 0.88, 1.0)
-    label_scale: float = 1.0
-    crisp_ticks: bool = True
-
-
-class TimeAxisOverlay:
-    def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
-        self.overlay = overlay
-        self.time_scale = time_scale
-        self.text_renderer = None
-        self.style = TimeAxisStyle()
-        if config:
-            for k, v in config.items():
-                if hasattr(self.style, k):
-                    setattr(self.style, k, v)
-
-    def draw(self, r) -> None:
-        layout = self.overlay.get_layout()
         ax, ay, aw, ah = layout.time_axis_rect
 
         if aw <= 0 or ah <= 0:
             return
 
+        # Usamos exactamente los mismos índices que el grid
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.min_label_spacing_px,
             extend_by_one=False
@@ -889,9 +817,10 @@ class TimeAxisOverlay:
             if i >= len(self.time_scale._timestamps):
                 break
 
-            x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_ticks)
+            # ← CLAVE: siempre crisp=True para perfecta sincronía con velas y grid
+            x = self.time_scale.get_aligned_x(i, crisp=True)
 
-            # Tick
+            # Tick (línea vertical pequeña)
             y1 = ay
             y2 = ay + self.style.tick_len
             r.draw_line_px(x, y1, x, y2,
@@ -902,20 +831,18 @@ class TimeAxisOverlay:
             if self.text_renderer is not None:
                 label = self.time_scale._timestamps[i].strftime("%H:%M")
                 text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
+                
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                # Evitar que se salga de los límites
-                if text_x < ax:
-                    continue
-                if text_x + text_w > ax + aw:
-                    continue
-
-                self.text_renderer.render_text(
-                    label, text_x, text_y,
-                    scale=self.style.label_scale,
-                    color=self.style.label_color
-                )
+                # Clipping inteligente: mostramos la etiqueta si al menos parte de ella es visible
+                # Esto evita que las etiquetas "desaparezcan" de repente al panear
+                if text_x + text_w > ax and text_x < ax + aw:
+                    self.text_renderer.render_text(
+                        label, text_x, text_y,
+                        scale=self.style.label_scale,
+                        color=self.style.label_color
+                    )
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\chart_overlay.py
 ================================================================================
@@ -1180,26 +1107,14 @@ class DOMOverlay:
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\grid.py
 ================================================================================
-# charts/overlays/grid.py
 """
-GridOverlay
-===========
+charts/overlays/grid.py
 
-Responsabilidad:
-- Dibujar la grilla horizontal (precios).
-- Dibujar la grilla vertical (tiempo).
+Overlay responsable de dibujar el grid (rejilla) del gráfico:
+- Líneas horizontales (niveles de precio)
+- Líneas verticales (divisiones de tiempo)
 
-Corrección importante de esta versión:
-- La grilla vertical YA NO calcula sus ticks por su cuenta.
-- Ahora reutiliza la lógica centralizada de TimeScale:
-    - get_tick_indices(...)
-    - get_aligned_x(...)
-
-Con esto las líneas verticales quedan alineadas con:
-- ticks del TimeAxis
-- labels del TimeAxis
-- zoom/pan del chart
-- centro X usado por CandleSeries
+Se alinea perfectamente con las velas gracias al TimeScale.
 """
 
 from __future__ import annotations
@@ -1214,34 +1129,30 @@ from render.renderer import Renderer2D
 
 @dataclass
 class GridStyle:
-    """
-    Estilo visual de la grilla.
-    """
-    show_horizontal: bool = True
-    show_vertical: bool = True
+    """Estilo visual del grid del gráfico."""
 
-    # Grilla horizontal (precios)
+    # ==================== LÍNEAS HORIZONTALES ====================
+    show_horizontal: bool = True
     major_color: Tuple[float, float, float, float] = (0.22, 0.22, 0.22, 0.45)
     major_width: float = 1.0
 
-    # Grilla vertical (tiempo)
-    vertical_min_spacing_px: float = 90.0
+    # ==================== LÍNEAS VERTICALES ====================
+    show_vertical: bool = True
+    vertical_min_spacing_px: float = 90.0          # Espaciado mínimo entre líneas verticales
     vertical_major_color: Tuple[float, float, float, float] = (0.30, 0.30, 0.30, 0.40)
     vertical_major_width: float = 1.1
 
-    # Si True, ajusta las líneas verticales a subpíxel para mayor nitidez
-    crisp_vertical_lines: bool = True
+    # Optimización visual
+    crisp_vertical_lines: bool = True              # Usa round() + 0.5 para que queden nítidas
 
 
 class GridOverlay:
     """
-    Overlay encargado de dibujar la grilla del chart.
+    Overlay que dibuja la rejilla del gráfico.
 
-    Nota:
-    - Este overlay no dibuja labels.
-    - Solo líneas horizontales y verticales.
-    - La sincronización con el eje de tiempo depende de usar
-      exactamente los mismos índices de tick que TimeAxisOverlay.
+    Se encarga de:
+    - Líneas horizontales alineadas con los ticks de precio
+    - Líneas verticales alineadas exactamente con el centro de las velas
     """
 
     def __init__(
@@ -1251,6 +1162,15 @@ class GridOverlay:
         time_scale: TimeScale,
         style: GridStyle | None = None,
     ) -> None:
+        """
+        Inicializa el overlay del grid.
+
+        Args:
+            overlay: Referencia al ChartOverlay (para obtener el área de dibujo)
+            price_scale: Escala de precios (para líneas horizontales)
+            time_scale: Escala de tiempo (para líneas verticales)
+            style: Configuración visual del grid (opcional)
+        """
         self.overlay = overlay
         self.price_scale = price_scale
         self.time_scale = time_scale
@@ -1258,11 +1178,9 @@ class GridOverlay:
 
     def _get_vertical_tick_indices(self) -> list[int]:
         """
-        Pide a TimeScale la lista de índices que deben usarse para la
-        grilla vertical.
+        Devuelve los índices de las velas donde se deben dibujar las líneas verticales.
 
-        Esto garantiza que el grid vertical use la misma base lógica
-        que el TimeAxisOverlay.
+        Usa el TimeScale para respetar el espaciado mínimo configurado.
         """
         return self.time_scale.get_tick_indices(
             min_spacing_px=self.style.vertical_min_spacing_px,
@@ -1271,19 +1189,23 @@ class GridOverlay:
 
     def draw(self, renderer: Renderer2D) -> None:
         """
-        Dibuja la grilla completa dentro del área de plot.
+        Dibuja el grid completo (horizontal + vertical) en el área del plot.
+
+        Las líneas verticales se alinean perfectamente con el centro de cada vela
+        gracias a `time_scale.get_aligned_x(..., crisp=True)`.
         """
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
 
+        # Si el área de dibujo es inválida, no hacemos nada
         if plot_w <= 0 or plot_h <= 0:
             return
 
-        # ============================================================
-        # 1) Grilla horizontal
-        # ============================================================
+        # ====================== LÍNEAS HORIZONTALES ======================
         if self.style.show_horizontal:
+            # Obtenemos los ticks mayores de la escala de precios
             ticks = self.price_scale.get_ticks_ex(target_major=12, minor_divisions=0)
+
             for _, y in ticks.get("major", []):
                 renderer.draw_line_px(
                     plot_x, y,
@@ -1291,21 +1213,18 @@ class GridOverlay:
                     color=self.style.major_color,
                     width=self.style.major_width,
                 )
-
-        # ============================================================
-        # 2) Grilla vertical sincronizada con el eje de tiempo
-        # ============================================================
+        
+        # ====================== LÍNEAS VERTICALES ======================
         if self.style.show_vertical:
             tick_indices = self._get_vertical_tick_indices()
 
             for i in tick_indices:
+                # Evitar índices fuera de rango
                 if i >= len(self.time_scale._timestamps):
                     break
 
-                x = self.time_scale.get_aligned_x(
-                    i,
-                    crisp=self.style.crisp_vertical_lines,
-                )
+                # Obtenemos la posición X exacta (centro de la vela)
+                x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_vertical_lines)
 
                 renderer.draw_line_px(
                     x, plot_y,
@@ -1664,7 +1583,6 @@ def _clamp(x: float, lo: float, hi: float) -> float:
 
 @dataclass
 class VisibleRange:
-    """Rango visible actual (para dibujado)"""
     start_ts: datetime
     end_ts: datetime
     start_idx: int
@@ -1697,7 +1615,6 @@ class TimeScale:
 
     # ====================== API PÚBLICA ======================
     def _clamp_right_offset(self) -> None:
-        """Ajusta right_offset dinámicamente según la cantidad total de velas"""
         if self.total_bars <= 1:
             self.right_offset = max(0.0, self.right_offset)
             return
@@ -1838,10 +1755,11 @@ class TimeScale:
         step = max(1, int(min_spacing_px / self.get_px_per_bar()))
         return list(range(vs, ve + 1, step))
 
-    def get_aligned_x(self, index: int, crisp: bool = True) -> float:
+    def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:
+        """VERSIÓN FUERTE: usa round() + 0.5 para alineación perfecta en TODOS los zooms"""
         x = float(self.index_to_x(index))
         if crisp:
-            x = math.floor(x) + 0.5
+            x = round(x) + 0.5          # ← cambio clave
         return x
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\series\__init__.py
@@ -1863,7 +1781,6 @@ from render.renderer import Renderer2D
 
 @dataclass
 class CandleStyle:
-    """Acepta todos los parámetros que window.py le pasa"""
     up_color: Tuple[float, float, float, float] = (0.15, 0.80, 0.15, 1.0)
     down_color: Tuple[float, float, float, float] = (1.0, 0.10, 0.10, 1.0)
 
@@ -1924,11 +1841,11 @@ class CandleSeries:
 
             d = self.data[i]
 
-            # ←←← CENTRO EXACTO (misma posición que la línea del grid)
+            # CENTRO EXACTO - sincronizado con el grid
             x_center = time_scale.get_aligned_x(i, crisp=True) + st.x_offset_px
 
             half = bar_width / 2.0
-            left = math.floor(x_center - half)          # snap idéntico al grid
+            left = round(x_center - half)          # ← más fuerte que floor
 
             # Clip rápido
             if left + bar_width < time_scale.view_x or left > time_scale.view_x + time_scale.view_w:
@@ -1942,10 +1859,8 @@ class CandleSeries:
             is_up = d.c >= d.o
             color = st.up_color if is_up else st.down_color
 
-            # Mecha (siempre centrada)
             renderer.draw_line_px(x_center, y_h, x_center, y_l, color, st.wick_width_px)
 
-            # Cuerpo de la vela
             body_top = min(y_o, y_c)
             body_bottom = max(y_o, y_c)
             body_h = max(1.0, body_bottom - body_top)

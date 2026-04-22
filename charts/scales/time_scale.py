@@ -11,7 +11,6 @@ def _clamp(x: float, lo: float, hi: float) -> float:
 
 @dataclass
 class VisibleRange:
-    """Rango visible actual (para dibujado)"""
     start_ts: datetime
     end_ts: datetime
     start_idx: int
@@ -44,7 +43,6 @@ class TimeScale:
 
     # ====================== API PÚBLICA ======================
     def _clamp_right_offset(self) -> None:
-        """Ajusta right_offset dinámicamente según la cantidad total de velas"""
         if self.total_bars <= 1:
             self.right_offset = max(0.0, self.right_offset)
             return
@@ -172,21 +170,39 @@ class TimeScale:
         return max(1.0, self.bar_spacing)
 
     def get_tick_indices(self, min_spacing_px: float, extend_by_one: bool = False) -> List[int]:
+        """Versión mejorada: etiquetas más estables y suaves al panear en TODOS los zooms"""
         vr = self.get_visible_range()
         vs = int(vr.start_idx)
         ve = int(vr.end_idx)
-        if extend_by_one:
-            vs = max(0, vs - 1)
-            ve = min(self.total_bars - 1, ve + 1)
 
-        if self.total_bars <= 0 or ve <= vs:
+        if self.total_bars <= 0 or ve < vs:
             return []
 
-        step = max(1, int(min_spacing_px / self.get_px_per_bar()))
-        return list(range(vs, ve + 1, step))
+        px_per_bar = self.get_px_per_bar()
+        # Calculamos step de forma más inteligente
+        step = max(1, math.ceil(min_spacing_px / px_per_bar))
 
-    def get_aligned_x(self, index: int, crisp: bool = True) -> float:
+        # Alineamos el primer tick para que las etiquetas se sientan "pegadas" y no salten al panear
+        offset = vs % step
+        start_idx = vs + (step - offset) % step
+        if start_idx > ve:
+            start_idx = vs
+
+        indices = list(range(start_idx, ve + 1, step))
+
+        # Incluimos un tick extra en los bordes para que aparezcan/desaparezcan suavemente
+        if extend_by_one and indices:
+            if indices[0] > 0:
+                indices.insert(0, indices[0] - step)
+            if indices[-1] < self.total_bars - 1:
+                indices.append(indices[-1] + step)
+
+        # Filtramos solo índices válidos
+        return [i for i in indices if 0 <= i < self.total_bars]
+    
+    def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:
+        """VERSIÓN FUERTE: usa round() + 0.5 para alineación perfecta en TODOS los zooms"""
         x = float(self.index_to_x(index))
         if crisp:
-            x = math.floor(x) + 0.5
+            x = round(x) + 0.5          # ← cambio clave
         return x

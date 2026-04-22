@@ -11,7 +11,6 @@ from render.renderer import Renderer2D
 
 @dataclass
 class CandleStyle:
-    """Acepta todos los parámetros que window.py le pasa"""
     up_color: Tuple[float, float, float, float] = (0.15, 0.80, 0.15, 1.0)
     down_color: Tuple[float, float, float, float] = (1.0, 0.10, 0.10, 1.0)
 
@@ -72,11 +71,11 @@ class CandleSeries:
 
             d = self.data[i]
 
-            # ←←← CENTRO EXACTO (misma posición que la línea del grid)
+            # CENTRO EXACTO - sincronizado con el grid
             x_center = time_scale.get_aligned_x(i, crisp=True) + st.x_offset_px
 
             half = bar_width / 2.0
-            left = math.floor(x_center - half)          # snap idéntico al grid
+            left = round(x_center - half)          # ← más fuerte que floor
 
             # Clip rápido
             if left + bar_width < time_scale.view_x or left > time_scale.view_x + time_scale.view_w:
@@ -90,10 +89,8 @@ class CandleSeries:
             is_up = d.c >= d.o
             color = st.up_color if is_up else st.down_color
 
-            # Mecha (siempre centrada)
             renderer.draw_line_px(x_center, y_h, x_center, y_l, color, st.wick_width_px)
 
-            # Cuerpo de la vela
             body_top = min(y_o, y_c)
             body_bottom = max(y_o, y_c)
             body_h = max(1.0, body_bottom - body_top)
