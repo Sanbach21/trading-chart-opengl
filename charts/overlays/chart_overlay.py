@@ -21,7 +21,7 @@ class ChartOverlay:
     DEFAULT_CONFIG = {
         "price_axis": {"show": True, "side": "right", "width_px": 90},
         "time_axis": {"show": True, "height_px": 28},
-        "colors": {"axis_band": (0.12, 0.12, 0.12, 0.92)},
+        "colors": {"axis_band": (0.12, 0.12, 0.12, 0.00)},
     }
 
     def __init__(self, time_scale, price_scale, config: Optional[Dict[str, Any]] = None) -> None:

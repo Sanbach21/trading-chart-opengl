@@ -200,6 +200,11 @@ from render.renderer import Renderer2D
 
 
 class GLFWWindow:
+    """
+    Ventana principal de la aplicación.
+    Controla GLFW, input, layout y el orden correcto de dibujo.
+    """
+
     def __init__(
         self,
         width: int = 1280,
@@ -224,9 +229,9 @@ class GLFWWindow:
         self.text_renderer: TextRenderer | None = None
 
         # ==================== PARÁMETROS VISUALES ====================
-        self.gap_extra_px = 7.0
+        self.gap_extra_px = 18.0
         self.candle_width_extra_px = 4.0
-        self.base_candle_width_px = 12.0
+        self.base_candle_width_px = 28.0
         self.candle_body_ratio = 0.72
 
         self._drag_mode: str | None = None
@@ -244,7 +249,7 @@ class GLFWWindow:
         self.time_scale = TimeScale(
             bar_spacing=self.base_candle_width_px + self.gap_extra_px + self.candle_width_extra_px,
             right_offset=8.0,
-            min_bar_spacing=3.0,
+            min_bar_spacing=0.2,
             max_bar_spacing=300.0,
         )
 
@@ -269,16 +274,16 @@ class GLFWWindow:
             initial_data = make_fake_ohlc(400, start_price=100.0, volatility=1.2, seed=7)
 
         style = CandleStyle(
-            gap_extra_px=5.5,
+            gap_extra_px=14.0,
             candle_width_extra_px=4.0,
-            gap_base_px=1.6,
+            gap_base_px=3.0,
             gap_growth_per_px=0.055,
             gap_transition_start_px=24.0,
             gap_transition_softness_px=38.0,
-            min_gap_px=1.1,
-            max_gap_px=45.0,
-            min_width_px=0.7,
-            max_width_px=115.0,
+            min_gap_px=1.0,
+            max_gap_px=60.0,
+            min_width_px=0.8,
+            max_width_px=120.0,
             draw_borders=True,
             candle_body_ratio=self.candle_body_ratio,
             clip_to_plot=True,
@@ -286,6 +291,7 @@ class GLFWWindow:
 
         self.series = CandleSeries(initial_data, style=style)
         self.time_scale.set_timestamps([c.ts for c in initial_data])
+        self.series.reset_initial_spacing()   # ← importante
 
         # ==================== INDICADORES ====================
         from charts.indicators.moving_average import SMA
@@ -355,14 +361,18 @@ class GLFWWindow:
         self.price_axis_overlay.text_renderer = self.text_renderer
         self.time_axis_overlay.text_renderer = self.text_renderer
 
-        # Añadir todo al chart
+        # ==================== ORDEN DE DIBUJO (Z-ORDER) ====================
         self.chart.add_series(self.series, pane_name="main")
-        self.chart.add_overlay(self.grid_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.price_axis_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.time_axis_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.tooltip_overlay, layer="front", pane_name="main")
+
+        # Layer "base" → se dibujan ANTES de las velas
+        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")   # fondo de ejes
+        self.chart.add_overlay(self.grid_overlay,    layer="base", pane_name="main")   # grid (detrás de velas)
+
+        # Layer "front" → se dibujan DESPUÉS de las velas
+        self.chart.add_overlay(self.price_axis_overlay, layer="front", pane_name="main")
+        self.chart.add_overlay(self.time_axis_overlay,  layer="front", pane_name="main")
+        self.chart.add_overlay(self.crosshair_overlay,  layer="front", pane_name="main")
+        self.chart.add_overlay(self.tooltip_overlay,    layer="front", pane_name="main")
 
         # Callbacks
         glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
@@ -381,14 +391,13 @@ class GLFWWindow:
             self.live_feed.start()
 
     def _on_resize(self, window, width: int, height: int) -> None:
+        """Callback cuando se redimensiona la ventana."""
         fb_w, fb_h = glfw.get_framebuffer_size(window)
         self._update_layout_scales(fb_w, fb_h)
         if self.text_renderer is not None:
             self.text_renderer.update_projection(fb_w, fb_h)
 
-    # ============================================================
-    # RECTÁNGULOS DE LAYOUT
-    # ============================================================
+    # ====================== RECTÁNGULOS DE LAYOUT ======================
     def _chart_rect(self) -> tuple[float, float, float, float]:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         chart_w = max(1.0, fb_w - self._price_axis_width_px)
@@ -487,7 +496,6 @@ class GLFWWindow:
             elif self._drag_mode == "price-scale" and abs(self.input.mouse.dy) > 0.0:
                 self.price_scale.scale_to(self.input.mouse.y)
 
-        # Autoscale de precio (solo si no está en modo manual)
         vr = self.time_scale.get_visible_range()
         if not self._price_manual_mode and vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             self.price_scale.autoscale_from_provider(
@@ -551,7 +559,7 @@ class GLFWWindow:
         if self.text_renderer is not None:
             self.text_renderer.update_projection(fb_w, fb_h)
 
-        glClearColor(0.12, 0.12, 0.12, 0.92)
+        glClearColor(1.0,1.0,1.0, 0.90)
         glClear(GL_COLOR_BUFFER_BIT)
 
         self.renderer2d.begin_frame(fb_w, fb_h)
@@ -781,7 +789,7 @@ class PriceAxisStyle:
     tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     decimals: int = 2
     target_major_ticks: int = 12
-    label_color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+    label_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     label_scale: float = 1.0
     min_label_gap_px: float = 5.0
 
@@ -802,25 +810,102 @@ class PriceAxisOverlay:
 
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
+        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
+        ax, ay, aw, ah = layout.price_axis_rect
+
+        if aw <= 0 or ah <= 0:
+            return
+
+        side = self._get_side()
+        ticks = self.price_scale.get_ticks_ex(target_major=self.style.target_major_ticks)
+
+        for price, y in ticks.get("major", []):
+            y = float(y)
+            if not (plot_y <= y <= plot_y + plot_h):
+                continue
+
+            # Tick
+            if side == "left":
+                x1 = ax + aw - self.style.tick_major_len
+                x2 = ax + aw
+            else:
+                x1 = ax
+                x2 = ax + self.style.tick_major_len
+
+            r.draw_line_px(x1, y, x2, y,
+                           color=self.style.tick_color,
+                           width=float(self.style.tick_width))
+
+            # Label
+            if self.text_renderer is not None:
+                label = f"{price:.{self.style.decimals}f}"
+                text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
+                text_y = y + text_h * 0.3
+
+                if side == "left":
+                    text_x = ax + aw - self.style.padding_px - text_w
+                else:
+                    text_x = ax + self.style.tick_major_len + self.style.padding_px
+
+                text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
+                self.text_renderer.render_text(
+                    label, text_x, text_y,
+                    scale=self.style.label_scale,
+                    color=self.style.label_color
+                )
+
+
+# ============================================================
+# TIME AXIS
+# ============================================================
+@dataclass
+class TimeAxisStyle:
+    padding_px: float = 6.0
+    tick_len: float = 6.0
+    tick_width: float = 1.0
+    tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
+    min_label_spacing_px: float = 90.0
+    label_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
+    label_scale: float = 1.0
+    crisp_ticks: bool = True
+
+
+class TimeAxisOverlay:
+    def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
+        self.overlay = overlay
+        self.time_scale = time_scale
+        self.text_renderer = None
+        self.style = TimeAxisStyle()
+        if config:
+            for k, v in config.items():
+                if hasattr(self.style, k):
+                    setattr(self.style, k, v)
+
+    def draw(self, r) -> None:
+        layout = self.overlay.get_layout()
         ax, ay, aw, ah = layout.time_axis_rect
 
         if aw <= 0 or ah <= 0:
             return
 
-        # Usamos exactamente los mismos índices que el grid
+        # Usamos extend_by_one=True para que las etiquetas entren/salgan suavemente
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.min_label_spacing_px,
-            extend_by_one=False
+            extend_by_one=True
         )
+
+        # Adaptamos el formato según el zoom (velas muy pequeñas → mostramos segundos)
+        bar_spacing = self.time_scale.bar_spacing
+        show_seconds = bar_spacing < 9.0
 
         for i in tick_indices:
             if i >= len(self.time_scale._timestamps):
-                break
+                continue
 
-            # ← CLAVE: siempre crisp=True para perfecta sincronía con velas y grid
+            # Misma posición exacta que velas y grid
             x = self.time_scale.get_aligned_x(i, crisp=True)
 
-            # Tick (línea vertical pequeña)
+            # Tick
             y1 = ay
             y2 = ay + self.style.tick_len
             r.draw_line_px(x, y1, x, y2,
@@ -829,15 +914,16 @@ class PriceAxisOverlay:
 
             # Label
             if self.text_renderer is not None:
-                label = self.time_scale._timestamps[i].strftime("%H:%M")
+                ts = self.time_scale._timestamps[i]
+                label = ts.strftime("%H:%M:%S" if show_seconds else "%H:%M")
+
                 text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
-                
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                # Clipping inteligente: mostramos la etiqueta si al menos parte de ella es visible
-                # Esto evita que las etiquetas "desaparezcan" de repente al panear
-                if text_x + text_w > ax and text_x < ax + aw:
+                # Clipping muy permisivo → las etiquetas aparecen/desaparecen suavemente
+                label_center = text_x + text_w * 0.5
+                if ax - 50 <= label_center <= ax + aw + 50:
                     self.text_renderer.render_text(
                         label, text_x, text_y,
                         scale=self.style.label_scale,
@@ -869,7 +955,7 @@ class ChartOverlay:
     DEFAULT_CONFIG = {
         "price_axis": {"show": True, "side": "right", "width_px": 90},
         "time_axis": {"show": True, "height_px": 28},
-        "colors": {"axis_band": (0.12, 0.12, 0.12, 0.92)},
+        "colors": {"axis_band": (0.12, 0.12, 0.12, 0.00)},
     }
 
     def __init__(self, time_scale, price_scale, config: Optional[Dict[str, Any]] = None) -> None:
@@ -911,13 +997,42 @@ class ChartOverlay:
             price_axis_rect=price_rect,
             time_axis_rect=time_rect,
         )
-
     def draw(self, renderer) -> None:
         layout = self.get_layout()
-        # Fondo de ejes (opcional)
-        if self.config["colors"].get("axis_band"):
-            renderer.draw_rect_px(*layout.price_axis_rect, color=self.config["colors"]["axis_band"])
-            renderer.draw_rect_px(*layout.time_axis_rect, color=self.config["colors"]["axis_band"])
+        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
+        pa_x, pa_y, pa_w, pa_h = layout.price_axis_rect
+        ta_x, ta_y, ta_w, ta_h = layout.time_axis_rect
+
+        # Fondo sutil de los ejes
+        axis_band = self.config["colors"].get("axis_band", (0.085, 0.085, 0.085, 0.97))
+        if pa_w > 0:
+            renderer.draw_rect_px(pa_x, pa_y, pa_w, pa_h, axis_band)
+        if ta_w > 0:
+            renderer.draw_rect_px(ta_x, ta_y, ta_w, ta_h, axis_band)
+
+        # === LÍNEAS DELGADAS DE SEPARACIÓN (esto es lo que realmente quieres) ===
+        separator_color = (0.32, 0.32, 0.32, 1.0)
+        separator_width = 1.0
+
+        # Línea vertical entre el chart y el price axis
+        if pa_w > 0:
+            renderer.draw_line_px(
+                plot_x + plot_w, plot_y,
+                plot_x + plot_w, plot_y + plot_h,
+                color=separator_color, width=separator_width
+            )
+
+        # Línea horizontal entre el chart y el time axis
+        if ta_h > 0:
+            renderer.draw_line_px(
+                plot_x, plot_y + plot_h,
+                plot_x + plot_w, plot_y + plot_h,
+                color=separator_color, width=separator_width
+            )
+
+        # Rellenamos la esquina inferior derecha (evita el hueco negro)
+        if pa_w > 0 and ta_h > 0:
+            renderer.draw_rect_px(pa_x, ta_y, pa_w, ta_h, axis_band)
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\crosshair.py
 ================================================================================
@@ -1139,7 +1254,7 @@ class GridStyle:
     # ==================== LÍNEAS VERTICALES ====================
     show_vertical: bool = True
     vertical_min_spacing_px: float = 90.0          # Espaciado mínimo entre líneas verticales
-    vertical_major_color: Tuple[float, float, float, float] = (0.30, 0.30, 0.30, 0.40)
+    vertical_major_color: Tuple[float, float, float, float] = (0.22, 0.22, 0.22, 0.45)
     vertical_major_width: float = 1.1
 
     # Optimización visual
@@ -1334,10 +1449,9 @@ class TooltipOverlay:
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\panes.py
 ================================================================================
-# charts/panes.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Any, Tuple, Dict
+from typing import List, Any, Tuple
 
 Rect = Tuple[float, float, float, float]
 
@@ -1353,39 +1467,55 @@ class PaneConfig:
 
 class Pane:
     """Un panel individual (Precio, Volumen, Indicadores, etc.)"""
-    
+
     def __init__(self, name: str, height_ratio: float = 1.0):
         self.name = name
         self.height_ratio = height_ratio
         self.config = PaneConfig(name=name, height_ratio=height_ratio)
-        
+
         self.series: List[Any] = []
-        self.overlays: List[Any] = []
-        self.price_scale: Any = None   # Cada pane puede tener su propia escala de precios
+        self.base_overlays: List[Any] = []   # Se dibujan ANTES de las velas
+        self.front_overlays: List[Any] = []  # Se dibujan DESPUÉS de las velas
+        self.price_scale: Any = None
 
     def add_series(self, series: Any) -> None:
         self.series.append(series)
 
-    def add_overlay(self, overlay: Any) -> None:
-        self.overlays.append(overlay)
+    def add_overlay(self, overlay: Any, layer: str = "base") -> None:
+        """Guarda el overlay en la capa correcta"""
+        if layer == "base":
+            self.base_overlays.append(overlay)
+        else:
+            self.front_overlays.append(overlay)
 
     def set_price_scale(self, price_scale: Any) -> None:
         self.price_scale = price_scale
 
     def draw(self, renderer: Any, time_scale: Any, visible_start: int, visible_end: int) -> None:
-        """Dibuja todas las series y overlays de este pane"""
+        """Orden correcto de dibujo:
+           1. Overlays base (chart_overlay + grid) → fondo y grid detrás de velas
+           2. Series (velas + indicadores)
+           3. Overlays front (price_axis, time_axis, crosshair, tooltip) → encima de todo
+        """
+        # 1. Base layer
+        for o in self.base_overlays:
+            if hasattr(o, "draw"):
+                o.draw(renderer)
+
+        # 2. Velas e indicadores
         for s in self.series:
             if hasattr(s, "draw"):
                 s.draw(renderer, time_scale, self.price_scale or None, visible_start, visible_end)
 
-        for o in self.overlays:
+        # 3. Front layer
+        for o in self.front_overlays:
             if hasattr(o, "draw"):
                 o.draw(renderer)
 
 
 class PaneManager:
     """Gestiona múltiples panes con ratios de altura y separadores"""
-    
+
     def __init__(self):
         self.panes: List[Pane] = []
         self.separator_width: float = 2.0
@@ -1398,17 +1528,14 @@ class PaneManager:
         return sum(p.config.height_ratio for p in self.panes if p.config.show)
 
     def calculate_pane_rects(self, chart_x: float, chart_y: float, chart_w: float, chart_h: float) -> List[Rect]:
-        """Calcula los rectángulos de cada pane según su height_ratio"""
         if not self.panes:
             return []
-
         total_ratio = self.get_total_height_ratio()
         if total_ratio <= 0:
             return []
 
         pane_rects: List[Rect] = []
         current_y = chart_y
-
         for pane in self.panes:
             if not pane.config.show:
                 continue
@@ -1416,14 +1543,11 @@ class PaneManager:
             height = max(pane.config.min_height_px, height)
             pane_rects.append((chart_x, current_y, chart_w, height))
             current_y += height + self.separator_width
-
         return pane_rects
 
     def draw_separators(self, renderer: Any, pane_rects: List[Rect]) -> None:
-        """Dibuja las líneas separadoras entre panes"""
         for i in range(1, len(pane_rects)):
             x, y, w, h = pane_rects[i]
-            # Línea superior del pane actual = separador
             renderer.draw_line_px(
                 x, y - self.separator_width,
                 x + w, y - self.separator_width,
@@ -1596,7 +1720,7 @@ class TimeScale:
         self,
         bar_spacing: float = 12.0,
         right_offset: float = 8.0,
-        min_bar_spacing: float = 3.0,
+        min_bar_spacing: float = 0.2,
         max_bar_spacing: float = 300.0,
     ) -> None:
         self.bar_spacing = float(bar_spacing)
@@ -1742,19 +1866,36 @@ class TimeScale:
         return max(1.0, self.bar_spacing)
 
     def get_tick_indices(self, min_spacing_px: float, extend_by_one: bool = False) -> List[int]:
+        """Versión mejorada: etiquetas más estables y suaves al panear en TODOS los zooms"""
         vr = self.get_visible_range()
         vs = int(vr.start_idx)
         ve = int(vr.end_idx)
-        if extend_by_one:
-            vs = max(0, vs - 1)
-            ve = min(self.total_bars - 1, ve + 1)
 
-        if self.total_bars <= 0 or ve <= vs:
+        if self.total_bars <= 0 or ve < vs:
             return []
 
-        step = max(1, int(min_spacing_px / self.get_px_per_bar()))
-        return list(range(vs, ve + 1, step))
+        px_per_bar = self.get_px_per_bar()
+        # Calculamos step de forma más inteligente
+        step = max(1, math.ceil(min_spacing_px / px_per_bar))
 
+        # Alineamos el primer tick para que las etiquetas se sientan "pegadas" y no salten al panear
+        offset = vs % step
+        start_idx = vs + (step - offset) % step
+        if start_idx > ve:
+            start_idx = vs
+
+        indices = list(range(start_idx, ve + 1, step))
+
+        # Incluimos un tick extra en los bordes para que aparezcan/desaparezcan suavemente
+        if extend_by_one and indices:
+            if indices[0] > 0:
+                indices.insert(0, indices[0] - step)
+            if indices[-1] < self.total_bars - 1:
+                indices.append(indices[-1] + step)
+
+        # Filtramos solo índices válidos
+        return [i for i in indices if 0 <= i < self.total_bars]
+    
     def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:
         """VERSIÓN FUERTE: usa round() + 0.5 para alineación perfecta en TODOS los zooms"""
         x = float(self.index_to_x(index))
@@ -1787,38 +1928,68 @@ class CandleStyle:
     wick_width_px: float = 1.2
     border_width_px: float = 1.0
 
-    min_width_px: float = 0.8
+    min_width_px: float = 2.5
     max_width_px: float = 120.0
 
-    gap_extra_px: float = 5.5
+    # === ÚNICO PARÁMETRO QUE TENÉS QUE TOCAR ===
+    gap_base_px: float = 15.0          # ← Cambiá SOLO este valor (ej: 6.0, 8.0, 12.0, 15.0...)
+
+    # (los demás gap_* se calculan automáticamente a partir de este)
+    gap_extra_px: float = 14.0
     candle_width_extra_px: float = 4.0
-    gap_base_px: float = 1.6
     gap_growth_per_px: float = 0.055
     gap_transition_start_px: float = 24.0
     gap_transition_softness_px: float = 38.0
-    min_gap_px: float = 1.1
-    max_gap_px: float = 45.0
+    min_gap_px: float = 1.0
+    max_gap_px: float = 60.0
 
     candle_body_ratio: float = 0.72
-    draw_borders: bool = False
+    draw_borders: bool = True
     clip_to_plot: bool = True
     x_offset_px: float = 0.0
+    thin_candle_threshold_px: float = 2.8
+
+    wick_up_color: Optional[Tuple[float, float, float, float]] = None
+    wick_down_color: Optional[Tuple[float, float, float, float]] = None
 
 
 class CandleSeries:
     def __init__(self, data: List[OHLC], style: Optional[CandleStyle] = None) -> None:
         self.data = data
         self.style = style or CandleStyle()
+        self._initial_bar_spacing: Optional[float] = None
+
+    def reset_initial_spacing(self) -> None:
+        self._initial_bar_spacing = None
 
     def get_high_low(self, i: int) -> Tuple[float, float]:
         d = self.data[i]
         return d.h, d.l
 
+    def _compute_gap(self, bar_spacing: float) -> float:
+        st = self.style
+
+        if self._initial_bar_spacing is None:
+            self._initial_bar_spacing = bar_spacing
+
+        initial = self._initial_bar_spacing
+        ratio = bar_spacing / initial if initial > 0 else 1.0
+
+        # Fórmula simplificada: gap_base_px es el que manda al inicio
+        gap = st.gap_base_px * (1.0 + 0.45 * ratio) + st.gap_extra_px * ratio
+        gap += st.gap_growth_per_px * bar_spacing
+
+        return max(st.min_gap_px, min(gap, st.max_gap_px))
+
     def _compute_bar_width(self, bar_spacing: float) -> float:
         st = self.style
-        width = bar_spacing * st.candle_body_ratio + st.candle_width_extra_px
-        width = max(st.min_width_px, min(width, bar_spacing * 0.95))
-        return math.floor(width * 2.0) / 2.0
+        gap = self._compute_gap(bar_spacing)
+
+        available = max(4.0, bar_spacing - gap)
+        width = available * st.candle_body_ratio + st.candle_width_extra_px
+
+        width = max(st.min_width_px, min(width, bar_spacing * 0.95, st.max_width_px))
+        return width
 
     def draw(
         self,
@@ -1841,15 +2012,10 @@ class CandleSeries:
 
             d = self.data[i]
 
-            # CENTRO EXACTO - sincronizado con el grid
             x_center = time_scale.get_aligned_x(i, crisp=True) + st.x_offset_px
-
             half = bar_width / 2.0
-            left = round(x_center - half)          # ← más fuerte que floor
-
-            # Clip rápido
-            if left + bar_width < time_scale.view_x or left > time_scale.view_x + time_scale.view_w:
-                continue
+            left = x_center - half
+            right = x_center + half
 
             y_o = price_scale.price_to_y(d.o)
             y_c = price_scale.price_to_y(d.c)
@@ -1857,21 +2023,33 @@ class CandleSeries:
             y_l = price_scale.price_to_y(d.l)
 
             is_up = d.c >= d.o
-            color = st.up_color if is_up else st.down_color
+            body_color = st.up_color if is_up else st.down_color
 
-            renderer.draw_line_px(x_center, y_h, x_center, y_l, color, st.wick_width_px)
+            wick_color = body_color
+            if is_up and st.wick_up_color is not None:
+                wick_color = st.wick_up_color
+            elif not is_up and st.wick_down_color is not None:
+                wick_color = st.wick_down_color
 
+            # MECHA PRIMERO
+            renderer.draw_line_px(x_center, y_h, x_center, y_l, color=wick_color, width=st.wick_width_px)
+
+            # CUERPO
             body_top = min(y_o, y_c)
             body_bottom = max(y_o, y_c)
             body_h = max(1.0, body_bottom - body_top)
 
-            if body_h > 0.0:
-                renderer.draw_rect_px(left, body_top, bar_width, body_h, color)
+            if body_h > 0.0 and bar_width >= st.thin_candle_threshold_px:
+                renderer.draw_rect_px(left, body_top, bar_width, body_h, body_color)
 
-            if st.draw_borders:
-                border_col = (0.0, 0.0, 0.0, 0.9) if is_up else (0.3, 0.3, 0.3, 0.9)
-                renderer.draw_line_px(left, body_top, left + bar_width, body_top, border_col, 1.0)
-                renderer.draw_line_px(left, body_bottom, left + bar_width, body_bottom, border_col, 1.0)
+                if st.draw_borders and bar_width > 1.2:
+                    border_col = (0.0, 0.0, 0.0, 0.98) if is_up else (0.20, 0.20, 0.20, 0.98)
+                    bw = st.border_width_px
+                    renderer.draw_line_px(left, body_top, right, body_top, border_col, bw)
+                    renderer.draw_line_px(left, body_bottom, right, body_bottom, border_col, bw)
+                    if bar_width > 2.8:
+                        renderer.draw_line_px(left, body_top, left, body_bottom, border_col, bw)
+                        renderer.draw_line_px(right, body_top, right, body_bottom, border_col, bw)
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\data\__init__.py
 ================================================================================

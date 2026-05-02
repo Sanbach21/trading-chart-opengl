@@ -24,7 +24,7 @@ class TimeScale:
         self,
         bar_spacing: float = 12.0,
         right_offset: float = 8.0,
-        min_bar_spacing: float = 3.0,
+        min_bar_spacing: float = 0.2,
         max_bar_spacing: float = 300.0,
     ) -> None:
         self.bar_spacing = float(bar_spacing)

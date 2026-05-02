@@ -20,6 +20,11 @@ from render.renderer import Renderer2D
 
 
 class GLFWWindow:
+    """
+    Ventana principal de la aplicación.
+    Controla GLFW, input, layout y el orden correcto de dibujo.
+    """
+
     def __init__(
         self,
         width: int = 1280,
@@ -43,12 +48,6 @@ class GLFWWindow:
         self.input = InputState()
         self.text_renderer: TextRenderer | None = None
 
-        # ==================== PARÁMETROS VISUALES ====================
-        self.gap_extra_px = 7.0
-        self.candle_width_extra_px = 4.0
-        self.base_candle_width_px = 12.0
-        self.candle_body_ratio = 0.72
-
         self._drag_mode: str | None = None
         self._price_manual_mode: bool = False
 
@@ -58,16 +57,27 @@ class GLFWWindow:
         self._last_price_axis_click_time: float = -999.0
         self._double_click_threshold: float = 0.30
 
-        # ==================== ESCALAS ====================
-        self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)
-        
+        # ==================== ESTILO DE VELAS ====================
+        style = CandleStyle(
+            base_candle_width_px=9.0,          # Grosor de la vela
+            base_gap_px=2.0,                   # Espacio entre velas
+            wick_width_px=1.0,
+            border_color=(0.0, 0.0, 0.0, 0.95),   # Color del borde y mecha cuando draw_borders=True
+            draw_borders=False,
+            clip_to_plot=True,
+        )
+
+        # Inicializamos TimeScale usando los valores del estilo
+        initial_bar_spacing = style.base_candle_width_px + style.base_gap_px
+
         self.time_scale = TimeScale(
-            bar_spacing=self.base_candle_width_px + self.gap_extra_px + self.candle_width_extra_px,
+            bar_spacing=initial_bar_spacing,
             right_offset=8.0,
-            min_bar_spacing=3.0,
+            min_bar_spacing=0.2,
             max_bar_spacing=300.0,
         )
 
+        self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)
         self.chart_overlay = ChartOverlay(time_scale=self.time_scale, price_scale=self.price_scale)
         self.chart = Chart()
         self.chart.set_scales(self.time_scale, self.price_scale)
@@ -88,24 +98,9 @@ class GLFWWindow:
         else:
             initial_data = make_fake_ohlc(400, start_price=100.0, volatility=1.2, seed=7)
 
-        style = CandleStyle(
-            gap_extra_px=5.5,
-            candle_width_extra_px=4.0,
-            gap_base_px=1.6,
-            gap_growth_per_px=0.055,
-            gap_transition_start_px=24.0,
-            gap_transition_softness_px=38.0,
-            min_gap_px=1.1,
-            max_gap_px=45.0,
-            min_width_px=0.7,
-            max_width_px=115.0,
-            draw_borders=True,
-            candle_body_ratio=self.candle_body_ratio,
-            clip_to_plot=True,
-        )
-
         self.series = CandleSeries(initial_data, style=style)
         self.time_scale.set_timestamps([c.ts for c in initial_data])
+        self.series.reset_initial_spacing()
 
         # ==================== INDICADORES ====================
         from charts.indicators.moving_average import SMA
@@ -175,14 +170,12 @@ class GLFWWindow:
         self.price_axis_overlay.text_renderer = self.text_renderer
         self.time_axis_overlay.text_renderer = self.text_renderer
 
-        # ==================== AÑADIR AL CHART - ORDEN CORRECTO DE DIBUJO ====================
+        # Orden de dibujo
         self.chart.add_series(self.series, pane_name="main")
 
-        # Layer "base" → se dibujan ANTES de las velas
-        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")   # fondo de ejes (axis_band)
-        self.chart.add_overlay(self.grid_overlay,    layer="base", pane_name="main")   # grid (detrás de las velas)
+        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
+        self.chart.add_overlay(self.grid_overlay,    layer="base", pane_name="main")
 
-        # Layer "front" → se dibujan DESPUÉS de las velas
         self.chart.add_overlay(self.price_axis_overlay, layer="front", pane_name="main")
         self.chart.add_overlay(self.time_axis_overlay,  layer="front", pane_name="main")
         self.chart.add_overlay(self.crosshair_overlay,  layer="front", pane_name="main")
@@ -204,7 +197,7 @@ class GLFWWindow:
             )
             self.live_feed.start()
 
-    # ... (el resto del archivo queda exactamente igual) ...
+    # ====================== Resto de métodos (sin cambios) ======================
     def _on_resize(self, window, width: int, height: int) -> None:
         fb_w, fb_h = glfw.get_framebuffer_size(window)
         self._update_layout_scales(fb_w, fb_h)
@@ -372,7 +365,7 @@ class GLFWWindow:
         if self.text_renderer is not None:
             self.text_renderer.update_projection(fb_w, fb_h)
 
-        glClearColor(0.12, 0.12, 0.12, 0.92)
+        glClearColor(1.0, 1.0, 1.0, 0.90)
         glClear(GL_COLOR_BUFFER_BIT)
 
         self.renderer2d.begin_frame(fb_w, fb_h)
