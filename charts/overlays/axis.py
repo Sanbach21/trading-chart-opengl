@@ -1,26 +1,24 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Tuple, List, Optional, Set
-
-import math
+from typing import Any, Dict, Tuple, List, Optional
 
 
 Rect = Tuple[float, float, float, float]
 
 
 # ============================================================
-# PRICE AXIS
+# PRICE AXIS - Major + Minor con etiquetas (como pediste)
 # ============================================================
 @dataclass
 class PriceAxisStyle:
     padding_px: float = 6.0
-    tick_major_len: float = 7.0
+    tick_major_len: float = 9.0
     tick_minor_len: float = 4.0
     tick_width: float = 1.0
     tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     decimals: int = 2
-    target_major_ticks: int = 12
+    target_major_ticks: int = 6          # mantiene limpio
     label_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     label_scale: float = 1.0
     min_label_gap_px: float = 5.0
@@ -49,14 +47,19 @@ class PriceAxisOverlay:
             return
 
         side = self._get_side()
-        ticks = self.price_scale.get_ticks_ex(target_major=self.style.target_major_ticks)
 
+        ticks = self.price_scale.get_ticks_ex(
+            target_major=self.style.target_major_ticks,
+            minor_divisions=2
+        )
+
+        # ====================== MAJOR TICKS ======================
         for price, y in ticks.get("major", []):
             y = float(y)
             if not (plot_y <= y <= plot_y + plot_h):
                 continue
 
-            # Tick
+            # Tick largo + grid (el grid ya se dibuja en grid.py)
             if side == "left":
                 x1 = ax + aw - self.style.tick_major_len
                 x2 = ax + aw
@@ -64,31 +67,53 @@ class PriceAxisOverlay:
                 x1 = ax
                 x2 = ax + self.style.tick_major_len
 
-            r.draw_line_px(x1, y, x2, y,
-                           color=self.style.tick_color,
-                           width=float(self.style.tick_width))
+            r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=self.style.tick_width)
+            self._draw_label(r, price, y, side, ax, aw, is_major=True)
 
-            # Label
-            if self.text_renderer is not None:
-                label = f"{price:.{self.style.decimals}f}"
-                text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
-                text_y = y + text_h * 0.3
+        # ====================== MINOR TICKS ======================
+        for price, y in ticks.get("minor", []):
+            y = float(y)
+            if not (plot_y <= y <= plot_y + plot_h):
+                continue
 
-                if side == "left":
-                    text_x = ax + aw - self.style.padding_px - text_w
-                else:
-                    text_x = ax + self.style.tick_major_len + self.style.padding_px
+            # Tick corto (sin grid)
+            if side == "left":
+                x1 = ax + aw - self.style.tick_minor_len
+                x2 = ax + aw
+            else:
+                x1 = ax
+                x2 = ax + self.style.tick_minor_len
 
-                text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
-                self.text_renderer.render_text(
-                    label, text_x, text_y,
-                    scale=self.style.label_scale,
-                    color=self.style.label_color
-                )
+            r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=self.style.tick_width)
+            
+            # ← AQUÍ ESTABA EL ERROR: ahora sí mostramos la etiqueta en minors
+            self._draw_label(r, price, y, side, ax, aw, is_major=False)
+
+    def _draw_label(self, r, price: float, y: float, side: str, ax: float, aw: float, is_major: bool):
+        if self.text_renderer is None:
+            return
+
+        label = f"{price:.{self.style.decimals}f}"
+        text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
+        text_y = y + text_h * 0.3
+
+        if side == "left":
+            text_x = ax + aw - self.style.padding_px - text_w
+        else:
+            tick_len = self.style.tick_major_len if is_major else self.style.tick_minor_len
+            text_x = ax + tick_len + self.style.padding_px
+
+        text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
+
+        self.text_renderer.render_text(
+            label, text_x, text_y,
+            scale=self.style.label_scale,
+            color=self.style.label_color
+        )
 
 
 # ============================================================
-# TIME AXIS
+# TIME AXIS (sin cambios)
 # ============================================================
 @dataclass
 class TimeAxisStyle:
@@ -120,13 +145,11 @@ class TimeAxisOverlay:
         if aw <= 0 or ah <= 0:
             return
 
-        # Usamos extend_by_one=True para que las etiquetas entren/salgan suavemente
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.min_label_spacing_px,
             extend_by_one=True
         )
 
-        # Adaptamos el formato según el zoom (velas muy pequeñas → mostramos segundos)
         bar_spacing = self.time_scale.bar_spacing
         show_seconds = bar_spacing < 9.0
 
@@ -134,17 +157,14 @@ class TimeAxisOverlay:
             if i >= len(self.time_scale._timestamps):
                 continue
 
-            # Misma posición exacta que velas y grid
             x = self.time_scale.get_aligned_x(i, crisp=True)
 
-            # Tick
             y1 = ay
             y2 = ay + self.style.tick_len
             r.draw_line_px(x, y1, x, y2,
                            color=self.style.tick_color,
                            width=float(self.style.tick_width))
 
-            # Label
             if self.text_renderer is not None:
                 ts = self.time_scale._timestamps[i]
                 label = ts.strftime("%H:%M:%S" if show_seconds else "%H:%M")
@@ -153,7 +173,6 @@ class TimeAxisOverlay:
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                # Clipping muy permisivo → las etiquetas aparecen/desaparecen suavemente
                 label_center = text_x + text_w * 0.5
                 if ax - 50 <= label_center <= ax + aw + 50:
                     self.text_renderer.render_text(

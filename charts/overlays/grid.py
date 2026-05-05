@@ -24,14 +24,14 @@ class GridStyle:
 
     # ==================== LÍNEAS HORIZONTALES ====================
     show_horizontal: bool = True
-    major_color: Tuple[float, float, float, float] = (0.22, 0.22, 0.22, 0.45)
+    major_color: Tuple[float, float, float, float] = (0.10, 0.10, 0.10, 0.90)
     major_width: float = 1.0
 
     # ==================== LÍNEAS VERTICALES ====================
     show_vertical: bool = True
     vertical_min_spacing_px: float = 90.0          # Espaciado mínimo entre líneas verticales
-    vertical_major_color: Tuple[float, float, float, float] = (0.22, 0.22, 0.22, 0.45)
-    vertical_major_width: float = 1.1
+    vertical_major_color: Tuple[float, float, float, float] = (0.10, 0.10, 0.10, 0.90)
+    vertical_major_width: float = 1.0
 
     # Optimización visual
     crisp_vertical_lines: bool = True              # Usa round() + 0.5 para que queden nítidas
@@ -95,8 +95,7 @@ class GridOverlay:
         # ====================== LÍNEAS HORIZONTALES ======================
         if self.style.show_horizontal:
             # Obtenemos los ticks mayores de la escala de precios
-            ticks = self.price_scale.get_ticks_ex(target_major=12, minor_divisions=0)
-
+            ticks = self.price_scale.get_ticks_ex(target_major=6, minor_divisions=0)
             for _, y in ticks.get("major", []):
                 renderer.draw_line_px(
                     plot_x, y,

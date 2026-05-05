@@ -88,26 +88,55 @@ class TimeScale:
         self.right_offset = padding_right_bars
         self._recalc_visible()
 
-    # ====================== INTERACCIÓN ======================
+        # ====================== INTERACCIÓN ======================
     def zoom_at_x(self, mouse_x: float, delta: float) -> None:
+        """Zoom con snapping a números bonitos/redondos"""
         if self.total_bars <= 0:
             return
 
         old_spacing = self.bar_spacing
         old_float_index = self._float_index_at_x(mouse_x)
 
-        factor = 1.18 if delta > 0 else (1.0 / 1.18)
-        self.bar_spacing = _clamp(old_spacing * factor, self.min_bar_spacing, self.max_bar_spacing)
+        # Factor de zoom (puedes ajustarlo)
+        factor_zoom = 1.21                     # 1.35 = más suave | 1.45 = más fuerte
 
+        if delta > 0:
+            factor = factor_zoom
+        else:
+            factor = 1.0 / factor_zoom
+
+        # Calculamos el nuevo tamaño
+        new_spacing = old_spacing * factor
+
+        # ====================== SNAPPING A NÚMEROS BONITOS ======================
+        self.bar_spacing = self._snap_to_nice_spacing(new_spacing)
+
+        # Mantener el punto bajo el mouse
         new_anchor = self.view_x + self.view_w - self.right_offset * self.bar_spacing
         bars_from_last = self._last_data_index - old_float_index
         target_x = new_anchor - bars_from_last * self.bar_spacing
+
         delta_px = float(mouse_x) - target_x
         self.right_offset -= delta_px / self.bar_spacing
 
         self._clamp_right_offset()
         self._recalc_visible()
 
+    # ====================== NUEVO MÉTODO (agregar al final de la clase) ======================
+    def _snap_to_nice_spacing(self, value: float) -> float:
+        """Devuelve el número más cercano de la lista de valores bonitos"""
+        nice_values = [
+            0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
+            8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0,
+            60.0, 80.0, 100.0, 120.0, 150.0, 200.0, 250.0, 300.0
+        ]
+
+        # Buscamos el valor más cercano
+        closest = min(nice_values, key=lambda x: abs(x - value))
+
+        # Respetamos los límites del TimeScale
+        return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
+    
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
             return

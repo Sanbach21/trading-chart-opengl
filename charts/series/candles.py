@@ -16,33 +16,27 @@ class CandleStyle:
     wick_width_px: float = 1.0
     border_width_px: float = 1.0
 
-    # ==================== PARÁMETROS PRINCIPALES ====================
-    base_candle_width_px: float = 18.0
-    base_gap_px: float = 8.0
+    base_candle_width_px: float = 8.0 
+    base_gap_px: float = 2.0
 
-    # Límites de seguridad
-    min_width_px: float = 0.8
-    max_width_px: float = 120.0
+    min_width_px: float = 1.60
+    max_width_px: float = 220.0
     min_gap_px: float = 1.0
     max_gap_px: float = 60.0
 
-    # Comportamiento al hacer zoom
     width_growth_factor: float = 0.45
     gap_growth_factor: float = 0.55
 
-    # Colores opcionales para mechas
     wick_up_color: Optional[Tuple[float, float, float, float]] = None
     wick_down_color: Optional[Tuple[float, float, float, float]] = None
 
-    # ==================== COLOR DEL BORDE Y MECHA ====================
     border_color: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.98)
 
-    # Parámetros legacy
     candle_body_ratio: float = 0.72
     draw_borders: bool = True
     clip_to_plot: bool = True
     x_offset_px: float = 0.0
-    thin_candle_threshold_px: float = 2.8
+    thin_candle_threshold_px: float = 1.51
 
 
 class CandleSeries:
@@ -97,12 +91,13 @@ class CandleSeries:
 
             d = self.data[i]
 
-            # Centro perfectamente alineado
-            x_center = time_scale.get_aligned_x(i, crisp=True) + st.x_offset_px
+            # ==================== INTEGER SNAPPING FUERTE (equivalente a lineCap='butt') ====================
+            # Redondeo puro a entero (sin +0.5) para máxima nitidez y alineación
+            x_center = round(time_scale.index_to_x(i)) + st.x_offset_px
 
             half = bar_width / 2.0
-            left = x_center - half
-            right = left + bar_width                     # ← Cálculo exacto para cerrar el borde derecho
+            left = round(x_center - half)          # redondeo fuerte
+            right = left + round(bar_width)        # borde derecho siempre exacto
 
             y_o = price_scale.price_to_y(d.o)
             y_c = price_scale.price_to_y(d.c)
@@ -112,7 +107,7 @@ class CandleSeries:
             is_up = d.c >= d.o
             body_color = st.up_color if is_up else st.down_color
 
-            # ==================== COLOR DE LA MECHA ====================
+            # Color de la mecha
             if st.draw_borders:
                 wick_color = st.border_color
             else:
@@ -122,8 +117,13 @@ class CandleSeries:
                 elif not is_up and st.wick_down_color is not None:
                     wick_color = st.wick_down_color
 
-            # MECHA
-            renderer.draw_line_px(x_center+0.002, y_h, x_center, y_l, color=wick_color, width=st.wick_width_px)
+            # MECHA (wick)
+            renderer.draw_line_px(
+                x_center, y_h,
+                x_center, y_l,
+                color=wick_color,
+                width=st.wick_width_px
+            )
 
             # CUERPO
             body_top = min(y_o, y_c)
@@ -133,12 +133,10 @@ class CandleSeries:
             if body_h > 0.0 and bar_width >= st.thin_candle_threshold_px:
                 renderer.draw_rect_px(left, body_top, bar_width, body_h, body_color)
 
-                # ==================== BORDE DEL CUERPO ====================
+                # BORDE DEL CUERPO (cerrado perfectamente)
                 if st.draw_borders and bar_width > 1.2:
                     bw = st.border_width_px
-                    # Bordes horizontales (arriba y abajo)
                     renderer.draw_line_px(left, body_top, right, body_top, st.border_color, bw)
-                    renderer.draw_line_px(left, body_bottom, right, body_bottom, st.border_color, bw)
-                    # Bordes verticales (izquierda y derecha) — ahora siempre se dibujan cuando hay borde
+                    renderer.draw_line_px(left, body_bottom, right+1, body_bottom, st.border_color, bw)
                     renderer.draw_line_px(left, body_top, left, body_bottom, st.border_color, bw)
-                    renderer.draw_line_px(right, body_top, right, body_bottom+1.0, st.border_color, bw)
+                    renderer.draw_line_px(right, body_top, right, body_bottom, st.border_color, bw)

@@ -17,12 +17,11 @@ from data.feeds.binance_rest import BinanceRESTFeed
 from data.feeds.binance_ws import BinanceWSFeed
 from font.text import TextRenderer
 from render.renderer import Renderer2D
-
+from pathlib import Path
 
 class GLFWWindow:
     """
     Ventana principal de la aplicación.
-    Controla GLFW, input, layout y el orden correcto de dibujo.
     """
 
     def __init__(
@@ -51,29 +50,33 @@ class GLFWWindow:
         self._drag_mode: str | None = None
         self._price_manual_mode: bool = False
 
+        # === NUEVO: Scroll acumulado (cada 4 clics = 1 zoom) ===
+        self._scroll_accum = 0.0
+        self._scroll_step = 4          # ← Cambia a 3 o 5 si quieres más/menos sensible
+
         # Layout principal
         self._price_axis_width_px: float = 90.0
         self._time_axis_height_px: float = 28.0
-        self._last_price_axis_click_time: float = -999.0
+        self._last_price_axis_click_time: float = -999.0 
         self._double_click_threshold: float = 0.30
 
         # ==================== ESTILO DE VELAS ====================
         style = CandleStyle(
-            base_candle_width_px=9.0,          # Grosor de la vela
-            base_gap_px=2.0,                   # Espacio entre velas
+            base_candle_width_px=8.0,
+            base_gap_px=2.0,
             wick_width_px=1.0,
-            border_color=(0.0, 0.0, 0.0, 0.95),   # Color del borde y mecha cuando draw_borders=True
-            draw_borders=False,
+            border_color=(0.0, 0.0, 0.0, 0.95),
+            draw_borders=True,
             clip_to_plot=True,
+            min_width_px=1.60, 
         )
 
-        # Inicializamos TimeScale usando los valores del estilo
         initial_bar_spacing = style.base_candle_width_px + style.base_gap_px
 
         self.time_scale = TimeScale(
             bar_spacing=initial_bar_spacing,
             right_offset=8.0,
-            min_bar_spacing=0.2,
+            min_bar_spacing=2.8,
             max_bar_spacing=300.0,
         )
 
@@ -142,8 +145,12 @@ class GLFWWindow:
         self.renderer2d.init()
 
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
+                # Ruta relativa al proyecto (funciona en cualquier máquina)
+        project_root = Path(__file__).resolve().parent.parent
+        font_path = str(project_root / "font" / "fonts_fft" / "Montserrat-Regular.ttf")
+
         self.text_renderer = TextRenderer(
-            font_path=r"C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\font\fonts_fft\Montserrat-Regular.ttf",
+            font_path=font_path,
             font_size=11,
             width=fb_w,
             height=fb_h,
@@ -174,12 +181,12 @@ class GLFWWindow:
         self.chart.add_series(self.series, pane_name="main")
 
         self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.grid_overlay,    layer="base", pane_name="main")
+        self.chart.add_overlay(self.grid_overlay, layer="base", pane_name="main")
 
         self.chart.add_overlay(self.price_axis_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.time_axis_overlay,  layer="front", pane_name="main")
-        self.chart.add_overlay(self.crosshair_overlay,  layer="front", pane_name="main")
-        self.chart.add_overlay(self.tooltip_overlay,    layer="front", pane_name="main")
+        self.chart.add_overlay(self.time_axis_overlay, layer="front", pane_name="main")
+        self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
+        self.chart.add_overlay(self.tooltip_overlay, layer="front", pane_name="main")
 
         # Callbacks
         glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
@@ -197,13 +204,13 @@ class GLFWWindow:
             )
             self.live_feed.start()
 
-    # ====================== Resto de métodos (sin cambios) ======================
     def _on_resize(self, window, width: int, height: int) -> None:
         fb_w, fb_h = glfw.get_framebuffer_size(window)
         self._update_layout_scales(fb_w, fb_h)
         if self.text_renderer is not None:
             self.text_renderer.update_projection(fb_w, fb_h)
 
+    # ... (todos los métodos _chart_rect, _price_axis_rect, etc. se mantienen iguales) ...
     def _chart_rect(self) -> tuple[float, float, float, float]:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         chart_w = max(1.0, fb_w - self._price_axis_width_px)
@@ -287,14 +294,23 @@ class GLFWWindow:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         self._update_layout_scales(fb_w, fb_h)
 
+        # ====================== SCROLL ACUMULADO ======================
         if self.input.mouse.scroll_y != 0.0:
-            if self._mouse_over_price_axis():
-                self._price_manual_mode = True
-                self.price_scale.start_scale(self.input.mouse.y)
-                self.price_scale.scale_to(self.input.mouse.y - self.input.mouse.scroll_y * 24.0)
-                self.price_scale.end_scale()
-            elif self._mouse_over_chart():
-                self.time_scale.zoom_at_x(self.input.mouse.x, self.input.mouse.scroll_y)
+            self._scroll_accum += self.input.mouse.scroll_y
+
+            if abs(self._scroll_accum) >= self._scroll_step:
+                steps = int(self._scroll_accum // self._scroll_step)
+                scroll_to_apply = float(steps * self._scroll_step)
+
+                if self._mouse_over_price_axis():
+                    self._price_manual_mode = True
+                    self.price_scale.start_scale(self.input.mouse.y)
+                    self.price_scale.scale_to(self.input.mouse.y - scroll_to_apply * 24.0)
+                    self.price_scale.end_scale()
+                elif self._mouse_over_chart():
+                    self.time_scale.zoom_at_x(self.input.mouse.x, scroll_to_apply)
+
+                self._scroll_accum -= scroll_to_apply
 
         if self.input.mouse.left:
             if self._drag_mode == "time-pan" and abs(self.input.mouse.dx) > 0.0:
@@ -371,6 +387,30 @@ class GLFWWindow:
         self.renderer2d.begin_frame(fb_w, fb_h)
         self._update_layout_scales(fb_w, fb_h)
         self.chart.draw(self.renderer2d)
+
+        # ====================== DEBUG EN PANTALLA ======================
+        if self.text_renderer is not None:
+            style = self.series.style
+            ts = self.time_scale
+            real_candle_width = self.series._compute_bar_width(ts.bar_spacing)
+
+            debug_text = [
+                f"bar_spacing       : {ts.bar_spacing:6.2f}px",
+                f"real_candle_width : {real_candle_width:6.2f}px",
+                f"base_candle_width : {style.base_candle_width_px:6.2f}px",
+                f"base_gap_px       : {style.base_gap_px:6.2f}px",
+                f"wick_width_px     : {style.wick_width_px:6.2f}px",
+                f"min_bar_spacing   : {ts.min_bar_spacing:6.2f}px",
+                f"scroll_accum      : {self._scroll_accum:.2f}",
+            ]
+
+            y = 35.0
+            for line in debug_text:
+                self.text_renderer.render_text(
+                    line, x=20.0, y=y, scale=1.05, color=(0.0, 0.0, 0.0, 0.98)
+                )
+                y += 24.0
+
         self.renderer2d.end_frame()
 
     def run(self) -> None:
