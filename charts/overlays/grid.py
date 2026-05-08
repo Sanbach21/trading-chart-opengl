@@ -95,7 +95,7 @@ class GridOverlay:
         # ====================== LÍNEAS HORIZONTALES ======================
         if self.style.show_horizontal:
             # Obtenemos los ticks mayores de la escala de precios
-            ticks = self.price_scale.get_ticks_ex(target_major=6, minor_divisions=0)
+            ticks = self.price_scale.get_ticks_ex(target_major=5, minor_divisions=0)
             for _, y in ticks.get("major", []):
                 renderer.draw_line_px(
                     plot_x, y,

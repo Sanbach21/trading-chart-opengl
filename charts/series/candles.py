@@ -53,11 +53,22 @@ class CandleSeries:
         return d.h, d.l
 
     def _compute_gap(self, bar_spacing: float) -> float:
+        """Versión mejorada para que las velas se junten mucho cuando haces zoom in"""
         if self._initial_bar_spacing is None:
             self._initial_bar_spacing = bar_spacing
-        ratio = bar_spacing / max(self._initial_bar_spacing, 1.0)
-        gap = self.style.base_gap_px * (1.0 + self.style.gap_growth_factor * (ratio - 1.0))
-        return max(self.style.min_gap_px, min(gap, self.style.max_gap_px))
+
+        # Zoom out o zoom medio
+        if bar_spacing >= self._initial_bar_spacing * 0.9:
+            ratio = bar_spacing / max(self._initial_bar_spacing, 1.0)
+            gap = self.style.base_gap_px * (1.0 + self.style.gap_growth_factor * (ratio - 1.0))
+            return max(self.style.min_gap_px, min(gap, self.style.max_gap_px))
+        
+        # Zoom in fuerte → reducimos el gap agresivamente
+        else:
+            progress = bar_spacing / max(self._initial_bar_spacing, 1.0)
+            gap = self.style.base_gap_px * (progress ** 1.6) * 2.5   # más agresivo
+            print(f"ZOOM IN FUERTE → bar_spacing={bar_spacing:.2f} | gap={gap:.2f}")
+            return max(-0.6, gap)   # permite solapamiento leve si querés
 
     def _compute_bar_width(self, bar_spacing: float) -> float:
         if self._initial_bar_spacing is None:

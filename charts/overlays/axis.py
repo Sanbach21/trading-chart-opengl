@@ -7,18 +7,15 @@ from typing import Any, Dict, Tuple, List, Optional
 Rect = Tuple[float, float, float, float]
 
 
-# ============================================================
-# PRICE AXIS - Major + Minor con etiquetas (como pediste)
-# ============================================================
 @dataclass
 class PriceAxisStyle:
     padding_px: float = 6.0
     tick_major_len: float = 9.0
-    tick_minor_len: float = 4.0
+    tick_minor_len: float = 9.0
     tick_width: float = 1.0
     tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     decimals: int = 2
-    target_major_ticks: int = 6          # mantiene limpio
+    target_major_ticks: int = 5
     label_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     label_scale: float = 1.0
     min_label_gap_px: float = 5.0
@@ -53,13 +50,11 @@ class PriceAxisOverlay:
             minor_divisions=2
         )
 
-        # ====================== MAJOR TICKS ======================
         for price, y in ticks.get("major", []):
             y = float(y)
             if not (plot_y <= y <= plot_y + plot_h):
                 continue
 
-            # Tick largo + grid (el grid ya se dibuja en grid.py)
             if side == "left":
                 x1 = ax + aw - self.style.tick_major_len
                 x2 = ax + aw
@@ -70,13 +65,11 @@ class PriceAxisOverlay:
             r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=self.style.tick_width)
             self._draw_label(r, price, y, side, ax, aw, is_major=True)
 
-        # ====================== MINOR TICKS ======================
         for price, y in ticks.get("minor", []):
             y = float(y)
             if not (plot_y <= y <= plot_y + plot_h):
                 continue
 
-            # Tick corto (sin grid)
             if side == "left":
                 x1 = ax + aw - self.style.tick_minor_len
                 x2 = ax + aw
@@ -85,8 +78,6 @@ class PriceAxisOverlay:
                 x2 = ax + self.style.tick_minor_len
 
             r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=self.style.tick_width)
-            
-            # ← AQUÍ ESTABA EL ERROR: ahora sí mostramos la etiqueta en minors
             self._draw_label(r, price, y, side, ax, aw, is_major=False)
 
     def _draw_label(self, r, price: float, y: float, side: str, ax: float, aw: float, is_major: bool):
@@ -112,9 +103,6 @@ class PriceAxisOverlay:
         )
 
 
-# ============================================================
-# TIME AXIS (sin cambios)
-# ============================================================
 @dataclass
 class TimeAxisStyle:
     padding_px: float = 6.0
