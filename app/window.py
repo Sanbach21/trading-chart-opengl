@@ -75,8 +75,10 @@ class GLFWWindow:
         self.time_scale = TimeScale(
             bar_spacing=initial_bar_spacing,
             right_offset=8.0,
-            min_bar_spacing=0.8,
+            min_bar_spacing=0.15,
             max_bar_spacing=300.0,
+            max_right_offset=500.0,
+            right_padding_px=35.0,
         )
 
         self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)
@@ -250,7 +252,7 @@ class GLFWWindow:
         vr = self.time_scale.get_visible_range()
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             self.price_scale.autoscale_from_provider(
-                vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.03
+                vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.012 
             )
 
     def _on_cursor_pos(self, window, x: float, y: float) -> None:
@@ -319,7 +321,7 @@ class GLFWWindow:
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             if not self._price_manual_mode:
                 self.price_scale.autoscale_from_provider(
-                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.03
+                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.005
                 )
             self.price_scale.set_range(
                 self.price_scale._range.low,
@@ -373,7 +375,7 @@ class GLFWWindow:
             vr = self.time_scale.get_visible_range()
             if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
                 self.price_scale.autoscale_from_provider(
-                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.03
+                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.005
                 )
 
     def render(self) -> None:

@@ -41,7 +41,7 @@ class PriceScale:
         start_idx: int,
         end_idx: int,
         provider: Callable[[int], Tuple[float, float]],
-        pad_ratio: float = 0.03,
+        pad_ratio: float = 0.005,
     ) -> None:
         if start_idx > end_idx or self._manual_range is not None:
             return
@@ -214,7 +214,8 @@ class PriceScale:
         else:
             t = (float(y) - y0) / usable_h
 
-        t = max(0.0, min(1.0, (t - 0.05) / 0.90))
+        # === MENOS PADDING INTERNO (más etiquetas cerca de los bordes) ===
+        t = max(0.0, min(1.0, (t - 0.015) / 0.97))   # antes era 0.05 / 0.90
 
         lo, hi = self._range.low, self._range.high
 
@@ -226,6 +227,36 @@ class PriceScale:
             return 10 ** (log_lo + t * (log_hi - log_lo))
 
         return lo + t * (hi - lo)
+
+
+    def price_to_y(self, price: float) -> float:
+        p = float(price)
+        lo, hi = self._range.low, self._range.high
+
+        y0 = self.view_y + self.top_padding_px
+        y1 = self.view_y + self.view_h - self.bottom_padding_px
+        usable_h = max(1.0, y1 - y0)
+
+        if self.log_scale:
+            if p <= 0:
+                p = 0.000001
+            if hi == lo:
+                t = 0.5
+            else:
+                t = (math.log10(p) - math.log10(lo)) / (math.log10(hi) - math.log10(lo))
+        else:
+            if hi == lo:
+                t = 0.5
+            else:
+                t = (p - lo) / (hi - lo)
+
+        # === MENOS PADDING INTERNO ===
+        t = 0.015 + t * 0.97                     # antes era 0.05 + t * 0.90
+
+        if self.y_down:
+            return y1 - t * usable_h
+
+        return y0 + t * usable_h
 
     def price_to_y(self, price: float) -> float:
         p = float(price)
@@ -251,7 +282,7 @@ class PriceScale:
             else:
                 t = (p - lo) / (hi - lo)
 
-        t = 0.05 + t * 0.90
+        t = 0.02 + t * 0.96
 
         if self.y_down:
             return y1 - t * usable_h

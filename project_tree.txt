@@ -248,6 +248,7 @@ class GLFWWindow:
             draw_borders=True,
             clip_to_plot=True,
             min_width_px=1.60,
+            min_gap_px=-0.0,
         )
 
         initial_bar_spacing = style.base_candle_width_px + style.base_gap_px
@@ -255,7 +256,7 @@ class GLFWWindow:
         self.time_scale = TimeScale(
             bar_spacing=initial_bar_spacing,
             right_offset=8.0,
-            min_bar_spacing=2.8,
+            min_bar_spacing=0.15,
             max_bar_spacing=300.0,
         )
 
@@ -430,7 +431,7 @@ class GLFWWindow:
         vr = self.time_scale.get_visible_range()
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             self.price_scale.autoscale_from_provider(
-                vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.03
+                vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.012 
             )
 
     def _on_cursor_pos(self, window, x: float, y: float) -> None:
@@ -499,7 +500,7 @@ class GLFWWindow:
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             if not self._price_manual_mode:
                 self.price_scale.autoscale_from_provider(
-                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.03
+                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.005
                 )
             self.price_scale.set_range(
                 self.price_scale._range.low,
@@ -553,7 +554,7 @@ class GLFWWindow:
             vr = self.time_scale.get_visible_range()
             if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
                 self.price_scale.autoscale_from_provider(
-                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.03
+                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.005
                 )
 
     def render(self) -> None:
@@ -1631,7 +1632,7 @@ class PriceScale:
         start_idx: int,
         end_idx: int,
         provider: Callable[[int], Tuple[float, float]],
-        pad_ratio: float = 0.03,
+        pad_ratio: float = 0.005,
     ) -> None:
         if start_idx > end_idx or self._manual_range is not None:
             return
@@ -1804,7 +1805,8 @@ class PriceScale:
         else:
             t = (float(y) - y0) / usable_h
 
-        t = max(0.0, min(1.0, (t - 0.05) / 0.90))
+        # === MENOS PADDING INTERNO (más etiquetas cerca de los bordes) ===
+        t = max(0.0, min(1.0, (t - 0.015) / 0.97))   # antes era 0.05 / 0.90
 
         lo, hi = self._range.low, self._range.high
 
@@ -1816,6 +1818,36 @@ class PriceScale:
             return 10 ** (log_lo + t * (log_hi - log_lo))
 
         return lo + t * (hi - lo)
+
+
+    def price_to_y(self, price: float) -> float:
+        p = float(price)
+        lo, hi = self._range.low, self._range.high
+
+        y0 = self.view_y + self.top_padding_px
+        y1 = self.view_y + self.view_h - self.bottom_padding_px
+        usable_h = max(1.0, y1 - y0)
+
+        if self.log_scale:
+            if p <= 0:
+                p = 0.000001
+            if hi == lo:
+                t = 0.5
+            else:
+                t = (math.log10(p) - math.log10(lo)) / (math.log10(hi) - math.log10(lo))
+        else:
+            if hi == lo:
+                t = 0.5
+            else:
+                t = (p - lo) / (hi - lo)
+
+        # === MENOS PADDING INTERNO ===
+        t = 0.015 + t * 0.97                     # antes era 0.05 + t * 0.90
+
+        if self.y_down:
+            return y1 - t * usable_h
+
+        return y0 + t * usable_h
 
     def price_to_y(self, price: float) -> float:
         p = float(price)
@@ -1841,7 +1873,7 @@ class PriceScale:
             else:
                 t = (p - lo) / (hi - lo)
 
-        t = 0.05 + t * 0.90
+        t = 0.02 + t * 0.96
 
         if self.y_down:
             return y1 - t * usable_h
@@ -1901,7 +1933,7 @@ class TimeScale:
         self.max_bar_spacing = float(max_bar_spacing)
         self.right_offset = float(right_offset)
 
-        self.max_right_offset = 50.0
+        self.max_right_offset = 100.0
         self.min_right_offset = -1_000_000.0
 
         self.total_bars: int = 0
@@ -1995,15 +2027,13 @@ class TimeScale:
     def _snap_to_nice_spacing(self, value: float) -> float:
         """Devuelve el número más cercano de la lista de valores bonitos"""
         nice_values = [
-            0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
+            0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
+            1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
             8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0,
             60.0, 80.0, 100.0, 120.0, 150.0, 200.0, 250.0, 300.0
         ]
 
-        # Buscamos el valor más cercano
         closest = min(nice_values, key=lambda x: abs(x - value))
-
-        # Respetamos los límites del TimeScale
         return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
     
     def pan_by_pixels(self, dx_px: float) -> None:
@@ -2132,9 +2162,9 @@ class CandleStyle:
     base_candle_width_px: float = 8.0 
     base_gap_px: float = 2.0
 
-    min_width_px: float = 1.60
+    min_width_px: float = 1.40      # bajado un poco
     max_width_px: float = 220.0
-    min_gap_px: float = 1.0
+    min_gap_px: float = 0.0
     max_gap_px: float = 60.0
 
     width_growth_factor: float = 0.45
@@ -2149,7 +2179,7 @@ class CandleStyle:
     draw_borders: bool = True
     clip_to_plot: bool = True
     x_offset_px: float = 0.0
-    thin_candle_threshold_px: float = 1.51
+    thin_candle_threshold_px: float = 1.2   # bajado para mejor visibilidad
 
 
 class CandleSeries:
@@ -2166,31 +2196,39 @@ class CandleSeries:
         return d.h, d.l
 
     def _compute_gap(self, bar_spacing: float) -> float:
+        """Versión mejorada para que las velas se junten mucho cuando haces zoom in"""
         if self._initial_bar_spacing is None:
             self._initial_bar_spacing = bar_spacing
-        ratio = bar_spacing / max(self._initial_bar_spacing, 1.0)
-        gap = self.style.base_gap_px * (1.0 + self.style.gap_growth_factor * (ratio - 1.0))
-        return max(self.style.min_gap_px, min(gap, self.style.max_gap_px))
+
+        # Zoom out o zoom medio
+        if bar_spacing >= self._initial_bar_spacing * 0.9:
+            ratio = bar_spacing / max(self._initial_bar_spacing, 1.0)
+            gap = self.style.base_gap_px * (1.0 + self.style.gap_growth_factor * (ratio - 1.0))
+            return max(self.style.min_gap_px, min(gap, self.style.max_gap_px))
+        
+        # Zoom in fuerte
+        else:
+            progress = bar_spacing / max(self._initial_bar_spacing, 1.0)
+            gap = self.style.base_gap_px * (progress ** 1.6) * 2.5
+            return max(-2.0, gap)   # más solapamiento permitido
+
 
     def _compute_bar_width(self, bar_spacing: float) -> float:
         if self._initial_bar_spacing is None:
             self._initial_bar_spacing = bar_spacing
+
         ratio = bar_spacing / max(self._initial_bar_spacing, 1.0)
         width = self.style.base_candle_width_px * (1.0 + self.style.width_growth_factor * (ratio - 1.0))
 
         gap = self._compute_gap(bar_spacing)
         max_possible = max(self.style.min_width_px, bar_spacing - gap - 2.0)
-        width = max(self.style.min_width_px, min(width, self.style.max_width_px, max_possible))
-        return width
 
-    def draw(
-        self,
-        renderer: Renderer2D,
-        time_scale: TimeScale,
-        price_scale: PriceScale,
-        visible_start: int,
-        visible_end: int,
-    ) -> None:
+        width = max(self.style.min_width_px, min(width, self.style.max_width_px, max_possible))
+        
+        return round(width)          # ← Redondeo fuerte aquí (muy importante)
+
+
+    def draw(self, renderer: Renderer2D, time_scale: TimeScale, price_scale: PriceScale, visible_start: int, visible_end: int) -> None:
         if visible_end < visible_start or not self.data:
             return
 
@@ -2204,13 +2242,10 @@ class CandleSeries:
 
             d = self.data[i]
 
-            # ==================== INTEGER SNAPPING FUERTE (equivalente a lineCap='butt') ====================
-            # Redondeo puro a entero (sin +0.5) para máxima nitidez y alineación
             x_center = round(time_scale.index_to_x(i)) + st.x_offset_px
-
             half = bar_width / 2.0
-            left = round(x_center - half)          # redondeo fuerte
-            right = left + round(bar_width)        # borde derecho siempre exacto
+            left = round(x_center - half)
+            right = left + bar_width
 
             y_o = price_scale.price_to_y(d.o)
             y_c = price_scale.price_to_y(d.c)
@@ -2220,39 +2255,33 @@ class CandleSeries:
             is_up = d.c >= d.o
             body_color = st.up_color if is_up else st.down_color
 
-            # Color de la mecha
-            if st.draw_borders:
-                wick_color = st.border_color
-            else:
-                wick_color = body_color
-                if is_up and st.wick_up_color is not None:
-                    wick_color = st.wick_up_color
-                elif not is_up and st.wick_down_color is not None:
-                    wick_color = st.wick_down_color
+            # Mecha
+            wick_color = st.border_color if st.draw_borders else body_color
+            if is_up and st.wick_up_color is not None:
+                wick_color = st.wick_up_color
+            elif not is_up and st.wick_down_color is not None:
+                wick_color = st.wick_down_color
 
-            # MECHA (wick)
-            renderer.draw_line_px(
-                x_center, y_h,
-                x_center, y_l,
-                color=wick_color,
-                width=st.wick_width_px
-            )
+            renderer.draw_line_px(x_center, y_h, x_center, y_l, color=wick_color, width=st.wick_width_px)
 
-            # CUERPO
+            # Cuerpo
             body_top = min(y_o, y_c)
             body_bottom = max(y_o, y_c)
             body_h = max(1.0, body_bottom - body_top)
 
             if body_h > 0.0 and bar_width >= st.thin_candle_threshold_px:
-                renderer.draw_rect_px(left, body_top, bar_width, body_h, body_color)
+                renderer.draw_rect_px(left, body_top, right - left, body_h, body_color)
 
-                # BORDE DEL CUERPO (cerrado perfectamente)
-                if st.draw_borders and bar_width > 1.2:
-                    bw = st.border_width_px
-                    renderer.draw_line_px(left, body_top, right, body_top, st.border_color, bw)
-                    renderer.draw_line_px(left, body_bottom, right+1, body_bottom, st.border_color, bw)
-                    renderer.draw_line_px(left, body_top, left, body_bottom, st.border_color, bw)
-                    renderer.draw_line_px(right, body_top, right, body_bottom, st.border_color, bw)
+            # Bordes - FIX
+            if st.draw_borders and bar_width > 1.2:
+                bw = st.border_width_px
+                border_right = right + (1 if bar_width >= 3.0 else 0)
+
+                renderer.draw_line_px(left, body_top,    border_right, body_top,    st.border_color, bw)
+                renderer.draw_line_px(left, body_bottom, border_right, body_bottom, st.border_color, bw)
+
+                renderer.draw_line_px(left,  body_top, left,  body_bottom, st.border_color, bw)
+                renderer.draw_line_px(right, body_top, right, body_bottom, st.border_color, bw)
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\data\__init__.py
 ================================================================================

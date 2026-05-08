@@ -19,9 +19,9 @@ class CandleStyle:
     base_candle_width_px: float = 8.0 
     base_gap_px: float = 2.0
 
-    min_width_px: float = 1.60
+    min_width_px: float = 1.40      # bajado un poco
     max_width_px: float = 220.0
-    min_gap_px: float = 1.0
+    min_gap_px: float = 0.0
     max_gap_px: float = 60.0
 
     width_growth_factor: float = 0.45
@@ -36,7 +36,7 @@ class CandleStyle:
     draw_borders: bool = True
     clip_to_plot: bool = True
     x_offset_px: float = 0.0
-    thin_candle_threshold_px: float = 1.51
+    thin_candle_threshold_px: float = 1.2   # bajado para mejor visibilidad
 
 
 class CandleSeries:
@@ -63,32 +63,29 @@ class CandleSeries:
             gap = self.style.base_gap_px * (1.0 + self.style.gap_growth_factor * (ratio - 1.0))
             return max(self.style.min_gap_px, min(gap, self.style.max_gap_px))
         
-        # Zoom in fuerte → reducimos el gap agresivamente
+        # Zoom in fuerte
         else:
             progress = bar_spacing / max(self._initial_bar_spacing, 1.0)
-            gap = self.style.base_gap_px * (progress ** 1.6) * 2.5   # más agresivo
-            print(f"ZOOM IN FUERTE → bar_spacing={bar_spacing:.2f} | gap={gap:.2f}")
-            return max(-0.6, gap)   # permite solapamiento leve si querés
+            gap = self.style.base_gap_px * (progress ** 1.6) * 2.5
+            return max(-2.0, gap)   # más solapamiento permitido
+
 
     def _compute_bar_width(self, bar_spacing: float) -> float:
         if self._initial_bar_spacing is None:
             self._initial_bar_spacing = bar_spacing
+
         ratio = bar_spacing / max(self._initial_bar_spacing, 1.0)
         width = self.style.base_candle_width_px * (1.0 + self.style.width_growth_factor * (ratio - 1.0))
 
         gap = self._compute_gap(bar_spacing)
         max_possible = max(self.style.min_width_px, bar_spacing - gap - 2.0)
-        width = max(self.style.min_width_px, min(width, self.style.max_width_px, max_possible))
-        return width
 
-    def draw(
-        self,
-        renderer: Renderer2D,
-        time_scale: TimeScale,
-        price_scale: PriceScale,
-        visible_start: int,
-        visible_end: int,
-    ) -> None:
+        width = max(self.style.min_width_px, min(width, self.style.max_width_px, max_possible))
+        
+        return round(width)          # ← Redondeo fuerte aquí (muy importante)
+
+
+    def draw(self, renderer: Renderer2D, time_scale: TimeScale, price_scale: PriceScale, visible_start: int, visible_end: int) -> None:
         if visible_end < visible_start or not self.data:
             return
 
@@ -102,13 +99,10 @@ class CandleSeries:
 
             d = self.data[i]
 
-            # ==================== INTEGER SNAPPING FUERTE (equivalente a lineCap='butt') ====================
-            # Redondeo puro a entero (sin +0.5) para máxima nitidez y alineación
             x_center = round(time_scale.index_to_x(i)) + st.x_offset_px
-
             half = bar_width / 2.0
-            left = round(x_center - half)          # redondeo fuerte
-            right = left + round(bar_width)        # borde derecho siempre exacto
+            left = round(x_center - half)
+            right = left + bar_width
 
             y_o = price_scale.price_to_y(d.o)
             y_c = price_scale.price_to_y(d.c)
@@ -118,36 +112,30 @@ class CandleSeries:
             is_up = d.c >= d.o
             body_color = st.up_color if is_up else st.down_color
 
-            # Color de la mecha
-            if st.draw_borders:
-                wick_color = st.border_color
-            else:
-                wick_color = body_color
-                if is_up and st.wick_up_color is not None:
-                    wick_color = st.wick_up_color
-                elif not is_up and st.wick_down_color is not None:
-                    wick_color = st.wick_down_color
+            # Mecha
+            wick_color = st.border_color if st.draw_borders else body_color
+            if is_up and st.wick_up_color is not None:
+                wick_color = st.wick_up_color
+            elif not is_up and st.wick_down_color is not None:
+                wick_color = st.wick_down_color
 
-            # MECHA (wick)
-            renderer.draw_line_px(
-                x_center, y_h,
-                x_center, y_l,
-                color=wick_color,
-                width=st.wick_width_px
-            )
+            renderer.draw_line_px(x_center, y_h, x_center, y_l, color=wick_color, width=st.wick_width_px)
 
-            # CUERPO
+            # Cuerpo
             body_top = min(y_o, y_c)
             body_bottom = max(y_o, y_c)
             body_h = max(1.0, body_bottom - body_top)
 
             if body_h > 0.0 and bar_width >= st.thin_candle_threshold_px:
-                renderer.draw_rect_px(left, body_top, bar_width, body_h, body_color)
+                renderer.draw_rect_px(left, body_top, right - left, body_h, body_color)
 
-                # BORDE DEL CUERPO (cerrado perfectamente)
-                if st.draw_borders and bar_width > 1.2:
-                    bw = st.border_width_px
-                    renderer.draw_line_px(left, body_top, right, body_top, st.border_color, bw)
-                    renderer.draw_line_px(left, body_bottom, right+1, body_bottom, st.border_color, bw)
-                    renderer.draw_line_px(left, body_top, left, body_bottom, st.border_color, bw)
-                    renderer.draw_line_px(right, body_top, right, body_bottom, st.border_color, bw)
+            # Bordes - FIX
+            if st.draw_borders and bar_width > 1.2:
+                bw = st.border_width_px
+                border_right = right + (1 if bar_width >= 3.0 else 0)
+
+                renderer.draw_line_px(left, body_top,    border_right, body_top,    st.border_color, bw)
+                renderer.draw_line_px(left, body_bottom, border_right, body_bottom, st.border_color, bw)
+
+                renderer.draw_line_px(left,  body_top, left,  body_bottom, st.border_color, bw)
+                renderer.draw_line_px(right, body_top, right, body_bottom, st.border_color, bw)

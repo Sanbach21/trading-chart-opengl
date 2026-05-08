@@ -138,33 +138,35 @@ class TimeAxisOverlay:
             extend_by_one=True
         )
 
-        bar_spacing = self.time_scale.bar_spacing
-        show_seconds = bar_spacing < 9.0
-
         for i in tick_indices:
             if i >= len(self.time_scale._timestamps):
                 continue
 
             x = self.time_scale.get_aligned_x(i, crisp=True)
 
+            # === NUEVA LÓGICA: Limitar las etiquetas para que no invadan el price axis ===
+            max_label_x = ax + aw - 10.0                    # margen de seguridad
+            if x > max_label_x:
+                continue                                    # Saltar etiquetas que están demasiado a la derecha
+
             y1 = ay
             y2 = ay + self.style.tick_len
-            r.draw_line_px(x, y1, x, y2,
-                           color=self.style.tick_color,
-                           width=float(self.style.tick_width))
+            r.draw_line_px(x, y1, x, y2, color=self.style.tick_color, width=self.style.tick_width)
 
             if self.text_renderer is not None:
                 ts = self.time_scale._timestamps[i]
-                label = ts.strftime("%H:%M:%S" if show_seconds else "%H:%M")
+                label = ts.strftime("%H:%M:%S" if self.time_scale.bar_spacing < 9.0 else "%H:%M")
 
                 text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                label_center = text_x + text_w * 0.5
-                if ax - 50 <= label_center <= ax + aw + 50:
-                    self.text_renderer.render_text(
-                        label, text_x, text_y,
-                        scale=self.style.label_scale,
-                        color=self.style.label_color
-                    )
+                # Evitar que el texto se salga por la derecha
+                if text_x + text_w > max_label_x:
+                    text_x = max_label_x - text_w
+
+                self.text_renderer.render_text(
+                    label, text_x, text_y,
+                    scale=self.style.label_scale,
+                    color=self.style.label_color
+                )

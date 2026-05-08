@@ -23,33 +23,37 @@ class TimeScale:
     def __init__(
         self,
         bar_spacing: float = 12.0,
-        right_offset: float = 8.0,
-        min_bar_spacing: float = 0.2,
+        right_offset: float = 12.0,
+        min_bar_spacing: float = 0.15,
         max_bar_spacing: float = 300.0,
+        max_right_offset: float = 500.0,      # podemos dejarlo alto
+        right_padding_px: float = 35.0,       # margen visual bonito
     ) -> None:
         self.bar_spacing = float(bar_spacing)
         self.min_bar_spacing = float(min_bar_spacing)
         self.max_bar_spacing = float(max_bar_spacing)
         self.right_offset = float(right_offset)
 
-        self.max_right_offset = 50.0
-        self.min_right_offset = -1_000_000.0
+        self.max_right_offset = float(max_right_offset)
+        self.right_padding_px = float(right_padding_px)
+        self.min_right_offset = -1_000_000.0   # permite mucho scroll hacia la derecha
 
         self.total_bars: int = 0
         self.view_x: float = 0.0
         self.view_w: float = 1.0
         self._timestamps: List[datetime] = []
         self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
-
     # ====================== API PÚBLICA ======================
     def _clamp_right_offset(self) -> None:
         if self.total_bars <= 1:
             self.right_offset = max(0.0, self.right_offset)
             return
 
-        self.right_offset = max(-(self.total_bars - 1), self.right_offset)
-        self.right_offset = min(self.max_right_offset, self.right_offset)
+        # Permitimos mover mucho hacia la derecha (velas antiguas)
+        self.right_offset = max(-(self.total_bars - 1) - 50, self.right_offset)
 
+        # Solo limitamos el máximo (hacia la derecha reciente)
+        self.right_offset = min(self.max_right_offset, self.right_offset)
     def set_timestamps(self, ts_list: List[datetime]) -> None:
         self._timestamps = ts_list[:]
         self.total_bars = len(ts_list)
@@ -126,15 +130,13 @@ class TimeScale:
     def _snap_to_nice_spacing(self, value: float) -> float:
         """Devuelve el número más cercano de la lista de valores bonitos"""
         nice_values = [
-            0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
+            0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
+            1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
             8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0,
             60.0, 80.0, 100.0, 120.0, 150.0, 200.0, 250.0, 300.0
         ]
 
-        # Buscamos el valor más cercano
         closest = min(nice_values, key=lambda x: abs(x - value))
-
-        # Respetamos los límites del TimeScale
         return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
     
     def pan_by_pixels(self, dx_px: float) -> None:
@@ -144,6 +146,9 @@ class TimeScale:
         self._clamp_right_offset()
         self._recalc_visible()
 
+    def get_right_padding_offset(self) -> float:
+        """Devuelve cuántas barras equivalen al padding derecho en píxeles"""
+        return self.right_padding_px / max(self.bar_spacing, 1.0)
     # ====================== MÉTODOS INTERNOS ======================
     @property
     def _last_data_index(self) -> float:
@@ -186,8 +191,14 @@ class TimeScale:
     def index_to_x(self, index: int | float) -> float:
         if self.total_bars <= 0:
             return self.view_x
+        
         bars_from_last = self._last_data_index - float(index)
-        return self._right_anchor_x() - bars_from_last * self.bar_spacing
+        x = self._right_anchor_x() - bars_from_last * self.bar_spacing
+        
+        # ← NUEVO: Aplicar padding derecho para que nunca invada el price axis
+        x -= self.right_padding_px
+        
+        return x
 
     def x_to_index(self, x: float) -> int:
         if self.total_bars <= 0:
