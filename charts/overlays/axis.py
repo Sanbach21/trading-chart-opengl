@@ -129,6 +129,7 @@ class TimeAxisOverlay:
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
         ax, ay, aw, ah = layout.time_axis_rect
+        plot_x, plot_y, plot_w, plot_h = layout.plot_rect   # ← Necesitamos esto
 
         if aw <= 0 or ah <= 0:
             return
@@ -137,6 +138,8 @@ class TimeAxisOverlay:
             min_spacing_px=self.style.min_label_spacing_px,
             extend_by_one=True
         )
+            # === NUEVO: Calcular el límite máximo usando el mismo padding que velas/grid ===
+        max_allowed_x = plot_x + plot_w - self.time_scale.right_padding_px - 5.0
 
         for i in tick_indices:
             if i >= len(self.time_scale._timestamps):
@@ -148,6 +151,11 @@ class TimeAxisOverlay:
             max_label_x = ax + aw - 10.0                    # margen de seguridad
             if x > max_label_x:
                 continue                                    # Saltar etiquetas que están demasiado a la derecha
+            # Usamos get_aligned_x (que ya aplica el padding internamente)
+            x = self.time_scale.get_aligned_x(i, crisp=True)   
+            # ←←← APLICAMOS EL MISMO MARGEN QUE VELAS Y GRID ←←←
+            if x > max_allowed_x:
+                continue  # No dibujar tick ni etiqueta si está dentro del padding
 
             y1 = ay
             y2 = ay + self.style.tick_len
