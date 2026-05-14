@@ -1,7 +1,7 @@
 from __future__ import annotations
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
 
@@ -18,7 +18,7 @@ class VisibleRange:
 
 
 class TimeScale:
-    """TimeScale profesional inspirada en TradingView Lightweight Charts."""
+    """TimeScale profesional inspirada en TradingView / NinjaTrader."""
 
     def __init__(
         self,
@@ -26,8 +26,8 @@ class TimeScale:
         right_offset: float = 12.0,
         min_bar_spacing: float = 0.15,
         max_bar_spacing: float = 300.0,
-        max_right_offset: float = 500.0,      # podemos dejarlo alto
-        right_padding_px: float = 35.0,       # margen visual bonito
+        max_right_offset: float = 500.0,
+        right_padding_px: float = 40.0,
     ) -> None:
         self.bar_spacing = float(bar_spacing)
         self.min_bar_spacing = float(min_bar_spacing)
@@ -36,24 +36,22 @@ class TimeScale:
 
         self.max_right_offset = float(max_right_offset)
         self.right_padding_px = float(right_padding_px)
-        self.min_right_offset = -1_000_000.0   # permite mucho scroll hacia la derecha
+        self.min_right_offset = -1_000_000.0
 
         self.total_bars: int = 0
         self.view_x: float = 0.0
         self.view_w: float = 1.0
         self._timestamps: List[datetime] = []
         self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
-    # ====================== API PÚBLICA ======================
+
     def _clamp_right_offset(self) -> None:
         if self.total_bars <= 1:
             self.right_offset = max(0.0, self.right_offset)
             return
 
-        # Permitimos mover mucho hacia la derecha (velas antiguas)
         self.right_offset = max(-(self.total_bars - 1) - 50, self.right_offset)
-
-        # Solo limitamos el máximo (hacia la derecha reciente)
         self.right_offset = min(self.max_right_offset, self.right_offset)
+
     def set_timestamps(self, ts_list: List[datetime]) -> None:
         self._timestamps = ts_list[:]
         self.total_bars = len(ts_list)
@@ -80,42 +78,20 @@ class TimeScale:
     def get_visible_range(self) -> VisibleRange:
         return self._visible
 
-    def scroll_to_realtime(self) -> None:
-        if self.total_bars <= 0:
-            return
-        self.right_offset = 0.0
-        self._recalc_visible()
-
-    def fit_content(self, padding_right_bars: float = 3.0) -> None:
-        if self.total_bars <= 0:
-            return
-        self.right_offset = padding_right_bars
-        self._recalc_visible()
-
-        # ====================== INTERACCIÓN ======================
+    # ====================== ZOOM Y PAN ======================
     def zoom_at_x(self, mouse_x: float, delta: float) -> None:
-        """Zoom con snapping a números bonitos/redondos"""
         if self.total_bars <= 0:
             return
 
         old_spacing = self.bar_spacing
         old_float_index = self._float_index_at_x(mouse_x)
 
-        # Factor de zoom (puedes ajustarlo)
-        factor_zoom = 1.21                     # 1.35 = más suave | 1.45 = más fuerte
+        factor_zoom = 1.21
+        factor = factor_zoom if delta > 0 else 1.0 / factor_zoom
 
-        if delta > 0:
-            factor = factor_zoom
-        else:
-            factor = 1.0 / factor_zoom
-
-        # Calculamos el nuevo tamaño
         new_spacing = old_spacing * factor
-
-        # ====================== SNAPPING A NÚMEROS BONITOS ======================
         self.bar_spacing = self._snap_to_nice_spacing(new_spacing)
 
-        # Mantener el punto bajo el mouse
         new_anchor = self.view_x + self.view_w - self.right_offset * self.bar_spacing
         bars_from_last = self._last_data_index - old_float_index
         target_x = new_anchor - bars_from_last * self.bar_spacing
@@ -126,19 +102,6 @@ class TimeScale:
         self._clamp_right_offset()
         self._recalc_visible()
 
-    # ====================== NUEVO MÉTODO (agregar al final de la clase) ======================
-    def _snap_to_nice_spacing(self, value: float) -> float:
-        """Devuelve el número más cercano de la lista de valores bonitos"""
-        nice_values = [
-            0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
-            1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
-            8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0,
-            60.0, 80.0, 100.0, 120.0, 150.0, 200.0, 250.0, 300.0
-        ]
-
-        closest = min(nice_values, key=lambda x: abs(x - value))
-        return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
-    
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
             return
@@ -146,10 +109,95 @@ class TimeScale:
         self._clamp_right_offset()
         self._recalc_visible()
 
-    def get_right_padding_offset(self) -> float:
-        """Devuelve cuántas barras equivalen al padding derecho en píxeles"""
-        return self.right_padding_px / max(self.bar_spacing, 1.0)
-    # ====================== MÉTODOS INTERNOS ======================
+    def _snap_to_nice_spacing(self, value: float) -> float:
+        nice_values = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
+                       1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
+                       8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0,
+                       60.0, 80.0, 100.0, 120.0, 150.0, 200.0, 250.0, 300.0]
+        closest = min(nice_values, key=lambda x: abs(x - value))
+        return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
+
+    # ====================== TICKS CON HORAS REDONDAS ======================
+    def get_tick_indices(self, min_spacing_px: float, extend_by_one: bool = False) -> List[int]:
+        """Genera ticks en horarios redondos y permite dibujar en zonas sin velas"""
+        if not self._timestamps:
+            return []
+
+        vr = self.get_visible_range()
+        vs = max(0, int(vr.start_idx))
+        ve = min(self.total_bars - 1, int(vr.end_idx))
+
+        start_ts = self._timestamps[vs]
+        end_ts = self._timestamps[ve]
+
+        visible_duration = (end_ts - start_ts).total_seconds()
+
+        # Intervalo según zoom
+        if visible_duration < 1800:        # < 30 min
+            step_minutes = 1
+        elif visible_duration < 7200:      # < 2 horas
+            step_minutes = 5
+        elif visible_duration < 21600:     # < 6 horas
+            step_minutes = 10
+        elif visible_duration < 43200:
+            step_minutes = 15
+        else:
+            step_minutes = 30
+
+        # Generar timestamps redondos
+        nice_ticks: List[datetime] = []
+        current = start_ts.replace(second=0, microsecond=0)
+
+        minute = (current.minute // step_minutes) * step_minutes
+        current = current.replace(minute=minute, second=0, microsecond=0)
+
+        while current <= end_ts + timedelta(minutes=step_minutes * 2):
+            nice_ticks.append(current)
+            current += timedelta(minutes=step_minutes)
+
+        # Convertir a índices (permite extrapolación)
+        indices = []
+        for ts in nice_ticks:
+            idx = self._find_closest_index(ts)
+            if idx >= 0:
+                indices.append(idx)
+
+        indices = sorted(set(indices))
+
+        if extend_by_one and indices:
+            if indices[0] > 0:
+                indices.insert(0, indices[0] - 1)
+            if indices[-1] < self.total_bars - 1:
+                indices.append(indices[-1] + 1)
+
+        return indices
+
+    def _find_closest_index(self, target_ts: datetime) -> int:
+        """Busca el índice más cercano (permite extrapolación)"""
+        if not self._timestamps:
+            return 0
+
+        left, right = 0, len(self._timestamps) - 1
+        while left <= right:
+            mid = (left + right) // 2
+            if self._timestamps[mid] == target_ts:
+                return mid
+            elif self._timestamps[mid] < target_ts:
+                left = mid + 1
+            else:
+                right = mid - 1
+
+        if left >= len(self._timestamps):
+            return len(self._timestamps) - 1
+        if left == 0:
+            return 0
+
+        if abs((self._timestamps[left] - target_ts).total_seconds()) < \
+           abs((self._timestamps[left - 1] - target_ts).total_seconds()):
+            return left
+        return left - 1
+
+    # ====================== INTERNOS ======================
     @property
     def _last_data_index(self) -> float:
         return self.total_bars - 1.0
@@ -187,17 +235,12 @@ class TimeScale:
             end_idx=end_idx,
         )
 
-    # ====================== MÉTODOS PARA DIBUJO ======================
     def index_to_x(self, index: int | float) -> float:
         if self.total_bars <= 0:
             return self.view_x
-        
         bars_from_last = self._last_data_index - float(index)
         x = self._right_anchor_x() - bars_from_last * self.bar_spacing
-        
-        # ← NUEVO: Aplicar padding derecho para que nunca invada el price axis
         x -= self.right_padding_px
-        
         return x
 
     def x_to_index(self, x: float) -> int:
@@ -209,40 +252,8 @@ class TimeScale:
     def get_px_per_bar(self) -> float:
         return max(1.0, self.bar_spacing)
 
-    def get_tick_indices(self, min_spacing_px: float, extend_by_one: bool = False) -> List[int]:
-        """Versión mejorada: etiquetas más estables y suaves al panear en TODOS los zooms"""
-        vr = self.get_visible_range()
-        vs = int(vr.start_idx)
-        ve = int(vr.end_idx)
-
-        if self.total_bars <= 0 or ve < vs:
-            return []
-
-        px_per_bar = self.get_px_per_bar()
-        # Calculamos step de forma más inteligente
-        step = max(1, math.ceil(min_spacing_px / px_per_bar))
-
-        # Alineamos el primer tick para que las etiquetas se sientan "pegadas" y no salten al panear
-        offset = vs % step
-        start_idx = vs + (step - offset) % step
-        if start_idx > ve:
-            start_idx = vs
-
-        indices = list(range(start_idx, ve + 1, step))
-
-        # Incluimos un tick extra en los bordes para que aparezcan/desaparezcan suavemente
-        if extend_by_one and indices:
-            if indices[0] > 0:
-                indices.insert(0, indices[0] - step)
-            if indices[-1] < self.total_bars - 1:
-                indices.append(indices[-1] + step)
-
-        # Filtramos solo índices válidos
-        return [i for i in indices if 0 <= i < self.total_bars]
-    
     def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:
-        """VERSIÓN FUERTE: usa round() + 0.5 para alineación perfecta en TODOS los zooms"""
         x = float(self.index_to_x(index))
         if crisp:
-            x = round(x) + 0.5          # ← cambio clave
+            x = round(x) + 0.5
         return x

@@ -9,6 +9,7 @@ Se alinea perfectamente con las velas gracias al TimeScale.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -24,17 +25,32 @@ class GridStyle:
 
     # ==================== LÍNEAS HORIZONTALES ====================
     show_horizontal: bool = True
-    major_color: Tuple[float, float, float, float] = (0.10, 0.10, 0.10, 0.90)
+
+    major_color: Tuple[float, float, float, float] = (
+        0.10,
+        0.10,
+        0.10,
+        0.90,
+    )
+
     major_width: float = 1.0
 
     # ==================== LÍNEAS VERTICALES ====================
     show_vertical: bool = True
-    vertical_min_spacing_px: float = 90.0          # Espaciado mínimo entre líneas verticales
-    vertical_major_color: Tuple[float, float, float, float] = (0.10, 0.10, 0.10, 0.90)
+
+    vertical_min_spacing_px: float = 90.0
+
+    vertical_major_color: Tuple[float, float, float, float] = (
+        0.10,
+        0.10,
+        0.10,
+        0.90,
+    )
+
     vertical_major_width: float = 1.0
 
-    # Optimización visual
-    crisp_vertical_lines: bool = True              # Usa round() + 0.5 para que queden nítidas
+    # Mejora visual subpixel
+    crisp_vertical_lines: bool = True
 
 
 class GridOverlay:
@@ -53,72 +69,117 @@ class GridOverlay:
         time_scale: TimeScale,
         style: GridStyle | None = None,
     ) -> None:
-        """
-        Inicializa el overlay del grid.
-
-        Args:
-            overlay: Referencia al ChartOverlay (para obtener el área de dibujo)
-            price_scale: Escala de precios (para líneas horizontales)
-            time_scale: Escala de tiempo (para líneas verticales)
-            style: Configuración visual del grid (opcional)
-        """
         self.overlay = overlay
         self.price_scale = price_scale
         self.time_scale = time_scale
         self.style = style or GridStyle()
 
+    # ==========================================================
+    # TICKS VERTICALES VISIBLES
+    # ==========================================================
     def _get_vertical_tick_indices(self) -> list[int]:
         """
-        Devuelve los índices de las velas donde se deben dibujar las líneas verticales.
-
-        Usa el TimeScale para respetar el espaciado mínimo configurado.
+        Devuelve únicamente los índices visibles
+        para evitar líneas fuera del viewport.
         """
-        return self.time_scale.get_tick_indices(
+
+        vr = self.time_scale.get_visible_range()
+
+        visible_start = max(0, vr.start_idx - 2)
+        visible_end = vr.end_idx + 2
+
+        tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.vertical_min_spacing_px,
-            extend_by_one=False,
+            extend_by_one=True,
         )
 
+        return [
+            i for i in tick_indices
+            if visible_start <= i <= visible_end
+        ]
+
+    # ==========================================================
+    # DRAW
+    # ==========================================================
     def draw(self, renderer: Renderer2D) -> None:
-        """
-        Dibuja el grid completo (horizontal + vertical) en el área del plot.
-
-        Las líneas verticales se alinean perfectamente con el centro de cada vela
-        gracias a `time_scale.get_aligned_x(..., crisp=True)`.
-        """
         layout = self.overlay.get_layout()
-        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
 
-        # Si el área de dibujo es inválida, no hacemos nada
+        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
+        price_axis_x, _, _, _ = layout.price_axis_rect
+
         if plot_w <= 0 or plot_h <= 0:
             return
 
-        # ====================== LÍNEAS HORIZONTALES ======================
+        # ======================================================
+        # GRID HORIZONTAL
+        # ======================================================
         if self.style.show_horizontal:
-            # Obtenemos los ticks mayores de la escala de precios
-            ticks = self.price_scale.get_ticks_ex(target_major=5, minor_divisions=0)
+
+            ticks = self.price_scale.get_ticks_ex(
+                target_major=5,
+                minor_divisions=0,
+            )
+
             for _, y in ticks.get("major", []):
+
+                # Evitar líneas fuera del área visible
+                if y < plot_y or y > plot_y + plot_h:
+                    continue
+
                 renderer.draw_line_px(
-                    plot_x, y,
-                    plot_x + plot_w, y,
+                    plot_x,
+                    y,
+                    plot_x + plot_w,
+                    y,
                     color=self.style.major_color,
                     width=self.style.major_width,
                 )
-        
-        # ====================== LÍNEAS VERTICALES ======================
+
+        # ======================================================
+        # GRID VERTICAL
+        # ======================================================
         if self.style.show_vertical:
+
             tick_indices = self._get_vertical_tick_indices()
 
-            for i in tick_indices:
-                # Evitar índices fuera de rango
-                if i >= len(self.time_scale._timestamps):
-                    break
+            # Límite derecho real del área visible
+            # evitando invadir el price axis
+            max_x_allowed = (
+                plot_x
+                + plot_w
+                - self.time_scale.right_padding_px
+                - 2.0
+            )
 
-                # Obtenemos la posición X exacta (centro de la vela)
-                x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_vertical_lines)
+            # Seguridad extra
+            hard_limit = price_axis_x - 2.0
+
+            max_x_allowed = min(max_x_allowed, hard_limit)
+
+            for i in tick_indices:
+
+                if i >= len(self.time_scale._timestamps):
+                    continue
+
+                # Centro exacto de la vela
+                x = self.time_scale.get_aligned_x(
+                    i,
+                    crisp=self.style.crisp_vertical_lines,
+                )
+
+                # Clip izquierdo
+                if x < plot_x:
+                    continue
+
+                # Clip derecho
+                if x > max_x_allowed:
+                    continue
 
                 renderer.draw_line_px(
-                    x, plot_y,
-                    x, plot_y + plot_h,
+                    x,
+                    plot_y,
+                    x,
+                    plot_y + plot_h,
                     color=self.style.vertical_major_color,
                     width=self.style.vertical_major_width,
                 )

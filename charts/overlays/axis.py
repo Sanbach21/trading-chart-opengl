@@ -1,8 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Tuple, List, Optional
-
 
 Rect = Tuple[float, float, float, float]
 
@@ -129,7 +128,7 @@ class TimeAxisOverlay:
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
         ax, ay, aw, ah = layout.time_axis_rect
-        plot_x, plot_y, plot_w, plot_h = layout.plot_rect   # ← Necesitamos esto
+        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
 
         if aw <= 0 or ah <= 0:
             return
@@ -138,40 +137,46 @@ class TimeAxisOverlay:
             min_spacing_px=self.style.min_label_spacing_px,
             extend_by_one=True
         )
-            # === NUEVO: Calcular el límite máximo usando el mismo padding que velas/grid ===
+
         max_allowed_x = plot_x + plot_w - self.time_scale.right_padding_px - 5.0
 
         for i in tick_indices:
-            if i >= len(self.time_scale._timestamps):
+            if i < 0:
                 continue
 
             x = self.time_scale.get_aligned_x(i, crisp=True)
 
-            # === NUEVA LÓGICA: Limitar las etiquetas para que no invadan el price axis ===
-            max_label_x = ax + aw - 10.0                    # margen de seguridad
-            if x > max_label_x:
-                continue                                    # Saltar etiquetas que están demasiado a la derecha
-            # Usamos get_aligned_x (que ya aplica el padding internamente)
-            x = self.time_scale.get_aligned_x(i, crisp=True)   
-            # ←←← APLICAMOS EL MISMO MARGEN QUE VELAS Y GRID ←←←
-            if x > max_allowed_x:
-                continue  # No dibujar tick ni etiqueta si está dentro del padding
+            if x < plot_x - 20 or x > max_allowed_x:
+                continue
 
+            # Línea vertical del grid
             y1 = ay
             y2 = ay + self.style.tick_len
             r.draw_line_px(x, y1, x, y2, color=self.style.tick_color, width=self.style.tick_width)
 
+            # Etiqueta de tiempo
             if self.text_renderer is not None:
-                ts = self.time_scale._timestamps[i]
-                label = ts.strftime("%H:%M:%S" if self.time_scale.bar_spacing < 9.0 else "%H:%M")
+                # Obtener timestamp correcto
+                if i < len(self.time_scale._timestamps):
+                    ts: datetime = self.time_scale._timestamps[i]
+                else:
+                    # Extrapolación cuando estamos a la izquierda de las velas
+                    last_ts = self.time_scale._timestamps[-1]
+                    minutes_extra = (i - (len(self.time_scale._timestamps) - 1))
+                    ts = last_ts + timedelta(minutes=minutes_extra)
+
+                # Formato compatible con Windows (sin %-I)
+                if self.time_scale.bar_spacing < 12.0:
+                    label = ts.strftime("%I:%M %p")   # Ej: 04:10 PM
+                else:
+                    label = ts.strftime("%I:%M %p")
 
                 text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                # Evitar que el texto se salga por la derecha
-                if text_x + text_w > max_label_x:
-                    text_x = max_label_x - text_w
+                if text_x + text_w > max_allowed_x:
+                    text_x = max_allowed_x - text_w
 
                 self.text_renderer.render_text(
                     label, text_x, text_y,
