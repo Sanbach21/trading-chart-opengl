@@ -79,18 +79,17 @@ class GridOverlay:
     # ==========================================================
     def _get_vertical_tick_indices(self) -> list[int]:
         """
-        Devuelve únicamente los índices visibles
-        para evitar líneas fuera del viewport.
+        Devuelve únicamente ticks realmente visibles.
         """
 
         vr = self.time_scale.get_visible_range()
 
-        visible_start = max(0, vr.start_idx - 2)
-        visible_end = vr.end_idx + 2
+        visible_start = max(0, int(vr.start_idx))
+        visible_end = int(vr.end_idx)
 
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.vertical_min_spacing_px,
-            extend_by_one=True,
+            extend_by_one=False,
         )
 
         return [
@@ -144,17 +143,7 @@ class GridOverlay:
 
             # Límite derecho real del área visible
             # evitando invadir el price axis
-            max_x_allowed = (
-                plot_x
-                + plot_w
-                - self.time_scale.right_padding_px
-                - 2.0
-            )
-
-            # Seguridad extra
-            hard_limit = price_axis_x - 2.0
-
-            max_x_allowed = min(max_x_allowed, hard_limit)
+            max_x_allowed = price_axis_x - 2.0
 
             for i in tick_indices:
 
@@ -172,6 +161,11 @@ class GridOverlay:
                     continue
 
                 # Clip derecho
+                max_x_allowed = price_axis_x - 2.0
+
+                if x < plot_x:
+                    continue
+
                 if x > max_x_allowed:
                     continue
 
