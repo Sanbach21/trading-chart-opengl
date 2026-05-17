@@ -210,10 +210,25 @@ class TimeScale:
 
         # === 5. Extend by one ===
         if extend_by_one and indices:
-            if indices[0] > 0:
-                indices.insert(0, indices[0] - 1)
-            # Permitimos un poco más allá de la última vela real
-            indices.append(indices[-1] + 1)
+
+        # Tick extra izquierda
+            left_candidate = indices[0] - 1
+
+        if left_candidate >= 0:
+            x0 = self.get_aligned_x(indices[0])
+            x1 = self.get_aligned_x(left_candidate)
+
+        if abs(x0 - x1) >= min_spacing_px:
+            indices.insert(0, left_candidate)
+
+        # Tick extra derecha
+            right_candidate = indices[-1] + 1
+
+            x0 = self.get_aligned_x(indices[-1])
+            x1 = self.get_aligned_x(right_candidate)
+
+        if abs(x1 - x0) >= min_spacing_px:
+            indices.append(right_candidate)
 
         
     
