@@ -113,13 +113,13 @@ class TimeAxisStyle:
     label_scale: float = 1.0
     crisp_ticks: bool = True
 
-
 class TimeAxisOverlay:
     def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.time_scale = time_scale
         self.text_renderer = None
         self.style = TimeAxisStyle()
+
         if config:
             for k, v in config.items():
                 if hasattr(self.style, k):
@@ -127,6 +127,7 @@ class TimeAxisOverlay:
 
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
+
         ax, ay, aw, ah = layout.time_axis_rect
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
 
@@ -135,51 +136,82 @@ class TimeAxisOverlay:
 
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.min_label_spacing_px,
-            extend_by_one=True
+            extend_by_one=True,
         )
 
-        max_allowed_x = plot_x + plot_w - self.time_scale.right_padding_px - 5.0
+        # ============================
+        # AHORA usamos TODO el plot
+        # ============================
+
+        max_allowed_x = plot_x + plot_w
 
         for i in tick_indices:
+
             if i < 0:
                 continue
 
-            x = self.time_scale.get_aligned_x(i, crisp=True)
+            x = self.time_scale.get_aligned_x(
+                i,
+                crisp=True,
+            )
 
-            if x < plot_x - 20 or x > max_allowed_x:
+            if x < plot_x - 40:
                 continue
 
-            # Línea vertical del grid
+            if x > max_allowed_x:
+                continue
+
+            # Tick vertical pequeño del axis
             y1 = ay
             y2 = ay + self.style.tick_len
-            r.draw_line_px(x, y1, x, y2, color=self.style.tick_color, width=self.style.tick_width)
 
-            # Etiqueta de tiempo
+            r.draw_line_px(
+                x,
+                y1,
+                x,
+                y2,
+                color=self.style.tick_color,
+                width=self.style.tick_width,
+            )
+
+            # ============================
+            # LABELS
+            # ============================
+
             if self.text_renderer is not None:
-                # Obtener timestamp correcto
+
                 if i < len(self.time_scale._timestamps):
+
                     ts: datetime = self.time_scale._timestamps[i]
+
                 else:
-                    # Extrapolación cuando estamos a la izquierda de las velas
+                    # extrapolación future space
                     last_ts = self.time_scale._timestamps[-1]
-                    minutes_extra = (i - (len(self.time_scale._timestamps) - 1))
+
+                    minutes_extra = (
+                        i - (len(self.time_scale._timestamps) - 1)
+                    )
+
                     ts = last_ts + timedelta(minutes=minutes_extra)
 
-                # Formato compatible con Windows (sin %-I)
-                if self.time_scale.bar_spacing < 12.0:
-                    label = ts.strftime("%I:%M %p")   # Ej: 04:10 PM
-                else:
-                    label = ts.strftime("%I:%M %p")
+                label = ts.strftime("%I:%M %p")
 
-                text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
+                text_w, text_h = self.text_renderer.measure_text(
+                    label,
+                    scale=self.style.label_scale,
+                )
+
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
+                # clamp visual
                 if text_x + text_w > max_allowed_x:
                     text_x = max_allowed_x - text_w
 
                 self.text_renderer.render_text(
-                    label, text_x, text_y,
+                    label,
+                    text_x,
+                    text_y,
                     scale=self.style.label_scale,
-                    color=self.style.label_color
+                    color=self.style.label_color,
                 )

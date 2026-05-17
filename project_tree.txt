@@ -259,7 +259,7 @@ class GLFWWindow:
             min_bar_spacing=0.15,
             max_bar_spacing=300.0,
             max_right_offset=500.0,
-            right_padding_px=150.0,
+            right_padding_px=500.0,
         )
 
         self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)
@@ -792,9 +792,8 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\ch
 ================================================================================
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Tuple, List, Optional
-
 
 Rect = Tuple[float, float, float, float]
 
@@ -906,13 +905,13 @@ class TimeAxisStyle:
     label_scale: float = 1.0
     crisp_ticks: bool = True
 
-
 class TimeAxisOverlay:
     def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
         self.overlay = overlay
         self.time_scale = time_scale
         self.text_renderer = None
         self.style = TimeAxisStyle()
+
         if config:
             for k, v in config.items():
                 if hasattr(self.style, k):
@@ -920,55 +919,93 @@ class TimeAxisOverlay:
 
     def draw(self, r) -> None:
         layout = self.overlay.get_layout()
+
         ax, ay, aw, ah = layout.time_axis_rect
-        plot_x, plot_y, plot_w, plot_h = layout.plot_rect   # ← Necesitamos esto
+        plot_x, plot_y, plot_w, plot_h = layout.plot_rect
 
         if aw <= 0 or ah <= 0:
             return
 
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.min_label_spacing_px,
-            extend_by_one=True
+            extend_by_one=True,
         )
-            # === NUEVO: Calcular el límite máximo usando el mismo padding que velas/grid ===
-        max_allowed_x = plot_x + plot_w - self.time_scale.right_padding_px - 5.0
+
+        # ============================
+        # AHORA usamos TODO el plot
+        # ============================
+
+        max_allowed_x = plot_x + plot_w
 
         for i in tick_indices:
-            if i >= len(self.time_scale._timestamps):
+
+            if i < 0:
                 continue
 
-            x = self.time_scale.get_aligned_x(i, crisp=True)
+            x = self.time_scale.get_aligned_x(
+                i,
+                crisp=True,
+            )
 
-            # === NUEVA LÓGICA: Limitar las etiquetas para que no invadan el price axis ===
-            max_label_x = ax + aw - 10.0                    # margen de seguridad
-            if x > max_label_x:
-                continue                                    # Saltar etiquetas que están demasiado a la derecha
-            # Usamos get_aligned_x (que ya aplica el padding internamente)
-            x = self.time_scale.get_aligned_x(i, crisp=True)   
-            # ←←← APLICAMOS EL MISMO MARGEN QUE VELAS Y GRID ←←←
+            if x < plot_x - 40:
+                continue
+
             if x > max_allowed_x:
-                continue  # No dibujar tick ni etiqueta si está dentro del padding
+                continue
 
+            # Tick vertical pequeño del axis
             y1 = ay
             y2 = ay + self.style.tick_len
-            r.draw_line_px(x, y1, x, y2, color=self.style.tick_color, width=self.style.tick_width)
+
+            r.draw_line_px(
+                x,
+                y1,
+                x,
+                y2,
+                color=self.style.tick_color,
+                width=self.style.tick_width,
+            )
+
+            # ============================
+            # LABELS
+            # ============================
 
             if self.text_renderer is not None:
-                ts = self.time_scale._timestamps[i]
-                label = ts.strftime("%H:%M:%S" if self.time_scale.bar_spacing < 9.0 else "%H:%M")
 
-                text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
+                if i < len(self.time_scale._timestamps):
+
+                    ts: datetime = self.time_scale._timestamps[i]
+
+                else:
+                    # extrapolación future space
+                    last_ts = self.time_scale._timestamps[-1]
+
+                    minutes_extra = (
+                        i - (len(self.time_scale._timestamps) - 1)
+                    )
+
+                    ts = last_ts + timedelta(minutes=minutes_extra)
+
+                label = ts.strftime("%I:%M %p")
+
+                text_w, text_h = self.text_renderer.measure_text(
+                    label,
+                    scale=self.style.label_scale,
+                )
+
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                # Evitar que el texto se salga por la derecha
-                if text_x + text_w > max_label_x:
-                    text_x = max_label_x - text_w
+                # clamp visual
+                if text_x + text_w > max_allowed_x:
+                    text_x = max_allowed_x - text_w
 
                 self.text_renderer.render_text(
-                    label, text_x, text_y,
+                    label,
+                    text_x,
+                    text_y,
                     scale=self.style.label_scale,
-                    color=self.style.label_color
+                    color=self.style.label_color,
                 )
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\chart_overlay.py
@@ -1265,15 +1302,10 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\ch
 ================================================================================
 """
 charts/overlays/grid.py
-
-Overlay responsable de dibujar el grid (rejilla) del gráfico:
-- Líneas horizontales (niveles de precio)
-- Líneas verticales (divisiones de tiempo)
-
-Se alinea perfectamente con las velas gracias al TimeScale.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -1285,32 +1317,26 @@ from render.renderer import Renderer2D
 
 @dataclass
 class GridStyle:
-    """Estilo visual del grid del gráfico."""
-
-    # ==================== LÍNEAS HORIZONTALES ====================
     show_horizontal: bool = True
-    major_color: Tuple[float, float, float, float] = (0.10, 0.10, 0.10, 0.90)
+
+    major_color: Tuple[float, float, float, float] = (
+        0.10, 0.10, 0.10, 0.90,
+    )
     major_width: float = 1.0
 
-    # ==================== LÍNEAS VERTICALES ====================
     show_vertical: bool = True
-    vertical_min_spacing_px: float = 90.0          # Espaciado mínimo entre líneas verticales
-    vertical_major_color: Tuple[float, float, float, float] = (0.10, 0.10, 0.10, 0.90)
+
+    vertical_min_spacing_px: float = 90.0
+
+    vertical_major_color: Tuple[float, float, float, float] = (
+        0.10, 0.10, 0.10, 0.90,
+    )
     vertical_major_width: float = 1.0
 
-    # Optimización visual
-    crisp_vertical_lines: bool = True              # Usa round() + 0.5 para que queden nítidas
+    crisp_vertical_lines: bool = True
 
 
 class GridOverlay:
-    """
-    Overlay que dibuja la rejilla del gráfico.
-
-    Se encarga de:
-    - Líneas horizontales alineadas con los ticks de precio
-    - Líneas verticales alineadas exactamente con el centro de las velas
-    """
-
     def __init__(
         self,
         overlay: ChartOverlay,
@@ -1318,72 +1344,98 @@ class GridOverlay:
         time_scale: TimeScale,
         style: GridStyle | None = None,
     ) -> None:
-        """
-        Inicializa el overlay del grid.
-
-        Args:
-            overlay: Referencia al ChartOverlay (para obtener el área de dibujo)
-            price_scale: Escala de precios (para líneas horizontales)
-            time_scale: Escala de tiempo (para líneas verticales)
-            style: Configuración visual del grid (opcional)
-        """
         self.overlay = overlay
         self.price_scale = price_scale
         self.time_scale = time_scale
         self.style = style or GridStyle()
+        
 
     def _get_vertical_tick_indices(self) -> list[int]:
         """
-        Devuelve los índices de las velas donde se deben dibujar las líneas verticales.
-
-        Usa el TimeScale para respetar el espaciado mínimo configurado.
+        Incluye ticks reales + virtuales del future space.
         """
-        return self.time_scale.get_tick_indices(
+
+        tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.vertical_min_spacing_px,
-            extend_by_one=False,
+            extend_by_one=True,
         )
 
-    def draw(self, renderer: Renderer2D) -> None:
-        """
-        Dibuja el grid completo (horizontal + vertical) en el área del plot.
+        vr = self.time_scale.get_visible_range()
 
-        Las líneas verticales se alinean perfectamente con el centro de cada vela
-        gracias a `time_scale.get_aligned_x(..., crisp=True)`.
-        """
+        visible_start = int(vr.start_idx) - 2
+        visible_end = int(vr.end_idx) + 30
+
+        return [
+            i for i in tick_indices
+            if visible_start <= i <= visible_end
+        ]
+
+    def draw(self, renderer: Renderer2D) -> None:
+        
         layout = self.overlay.get_layout()
+
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
 
-        # Si el área de dibujo es inválida, no hacemos nada
         if plot_w <= 0 or plot_h <= 0:
             return
 
-        # ====================== LÍNEAS HORIZONTALES ======================
+        # ======================================================
+        # GRID HORIZONTAL
+        # ======================================================
+
         if self.style.show_horizontal:
-            # Obtenemos los ticks mayores de la escala de precios
-            ticks = self.price_scale.get_ticks_ex(target_major=5, minor_divisions=0)
+
+            ticks = self.price_scale.get_ticks_ex(
+                target_major=5,
+                minor_divisions=0,
+            )
+
             for _, y in ticks.get("major", []):
+
+                if y < plot_y or y > plot_y + plot_h:
+                    continue
+
                 renderer.draw_line_px(
-                    plot_x, y,
-                    plot_x + plot_w, y,
+                    plot_x,
+                    y,
+                    plot_x + plot_w,
+                    y,
                     color=self.style.major_color,
                     width=self.style.major_width,
                 )
-        
-        # ====================== LÍNEAS VERTICALES ======================
+
+        # ======================================================
+        # GRID VERTICAL
+        # ======================================================
+
         if self.style.show_vertical:
-            tick_indices = self._get_vertical_tick_indices()
+
+            tick_indices = self.time_scale.get_tick_indices(
+                        min_spacing_px=self.style.vertical_min_spacing_px,
+                        extend_by_one=True,
+                    )
+            right_limit = plot_x + plot_w 
 
             for i in tick_indices:
-                # Evitar índices fuera de rango
-                if i >= len(self.time_scale._timestamps):
-                    break
 
-                # Obtenemos la posición X exacta (centro de la vela)
-                x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_vertical_lines)
+                x = self.time_scale.get_aligned_x(
+                    i,
+                    crisp=self.style.crisp_vertical_lines,
+                )
+
+                # fuera del área visible izquierda
+                if x < plot_x - 20:
+                    continue
+
+                # fuera del chart derecho real
+                if x > right_limit:
+                    continue
 
                 renderer.draw_line_px(
-                    x, plot_y,
-                    x, plot_y + plot_h,
+                    x,
+                    plot_y,
+                    x,
+                    plot_y + plot_h,
                     color=self.style.vertical_major_color,
                     width=self.style.vertical_major_width,
                 )
@@ -1914,7 +1966,7 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\ch
 from __future__ import annotations
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
 
@@ -1931,7 +1983,7 @@ class VisibleRange:
 
 
 class TimeScale:
-    """TimeScale profesional inspirada en TradingView Lightweight Charts."""
+    """TimeScale profesional inspirada en TradingView / NinjaTrader."""
 
     def __init__(
         self,
@@ -1939,8 +1991,8 @@ class TimeScale:
         right_offset: float = 12.0,
         min_bar_spacing: float = 0.15,
         max_bar_spacing: float = 300.0,
-        max_right_offset: float = 500.0,      # podemos dejarlo alto
-        right_padding_px: float = 35.0,       # margen visual bonito
+        max_right_offset: float = 500.0,
+        right_padding_px: float = 50.0,
     ) -> None:
         self.bar_spacing = float(bar_spacing)
         self.min_bar_spacing = float(min_bar_spacing)
@@ -1949,24 +2001,22 @@ class TimeScale:
 
         self.max_right_offset = float(max_right_offset)
         self.right_padding_px = float(right_padding_px)
-        self.min_right_offset = -1_000_000.0   # permite mucho scroll hacia la derecha
+        self.min_right_offset = -1_000_000.0
 
         self.total_bars: int = 0
         self.view_x: float = 0.0
         self.view_w: float = 1.0
         self._timestamps: List[datetime] = []
         self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
-    # ====================== API PÚBLICA ======================
+
     def _clamp_right_offset(self) -> None:
         if self.total_bars <= 1:
             self.right_offset = max(0.0, self.right_offset)
             return
 
-        # Permitimos mover mucho hacia la derecha (velas antiguas)
         self.right_offset = max(-(self.total_bars - 1) - 50, self.right_offset)
-
-        # Solo limitamos el máximo (hacia la derecha reciente)
         self.right_offset = min(self.max_right_offset, self.right_offset)
+
     def set_timestamps(self, ts_list: List[datetime]) -> None:
         self._timestamps = ts_list[:]
         self.total_bars = len(ts_list)
@@ -1993,42 +2043,20 @@ class TimeScale:
     def get_visible_range(self) -> VisibleRange:
         return self._visible
 
-    def scroll_to_realtime(self) -> None:
-        if self.total_bars <= 0:
-            return
-        self.right_offset = 0.0
-        self._recalc_visible()
-
-    def fit_content(self, padding_right_bars: float = 3.0) -> None:
-        if self.total_bars <= 0:
-            return
-        self.right_offset = padding_right_bars
-        self._recalc_visible()
-
-        # ====================== INTERACCIÓN ======================
+    # ====================== ZOOM Y PAN ======================
     def zoom_at_x(self, mouse_x: float, delta: float) -> None:
-        """Zoom con snapping a números bonitos/redondos"""
         if self.total_bars <= 0:
             return
 
         old_spacing = self.bar_spacing
         old_float_index = self._float_index_at_x(mouse_x)
 
-        # Factor de zoom (puedes ajustarlo)
-        factor_zoom = 1.21                     # 1.35 = más suave | 1.45 = más fuerte
+        factor_zoom = 1.21
+        factor = factor_zoom if delta > 0 else 1.0 / factor_zoom
 
-        if delta > 0:
-            factor = factor_zoom
-        else:
-            factor = 1.0 / factor_zoom
-
-        # Calculamos el nuevo tamaño
         new_spacing = old_spacing * factor
-
-        # ====================== SNAPPING A NÚMEROS BONITOS ======================
         self.bar_spacing = self._snap_to_nice_spacing(new_spacing)
 
-        # Mantener el punto bajo el mouse
         new_anchor = self.view_x + self.view_w - self.right_offset * self.bar_spacing
         bars_from_last = self._last_data_index - old_float_index
         target_x = new_anchor - bars_from_last * self.bar_spacing
@@ -2039,19 +2067,6 @@ class TimeScale:
         self._clamp_right_offset()
         self._recalc_visible()
 
-    # ====================== NUEVO MÉTODO (agregar al final de la clase) ======================
-    def _snap_to_nice_spacing(self, value: float) -> float:
-        """Devuelve el número más cercano de la lista de valores bonitos"""
-        nice_values = [
-            0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
-            1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
-            8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0,
-            60.0, 80.0, 100.0, 120.0, 150.0, 200.0, 250.0, 300.0
-        ]
-
-        closest = min(nice_values, key=lambda x: abs(x - value))
-        return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
-    
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
             return
@@ -2059,10 +2074,142 @@ class TimeScale:
         self._clamp_right_offset()
         self._recalc_visible()
 
-    def get_right_padding_offset(self) -> float:
-        """Devuelve cuántas barras equivalen al padding derecho en píxeles"""
-        return self.right_padding_px / max(self.bar_spacing, 1.0)
-    # ====================== MÉTODOS INTERNOS ======================
+    def _snap_to_nice_spacing(self, value: float) -> float:
+        nice_values = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
+                       1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0,
+                       8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0,
+                       60.0, 80.0, 100.0, 120.0, 150.0, 200.0, 250.0, 300.0]
+        closest = min(nice_values, key=lambda x: abs(x - value))
+        return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
+
+    def get_tick_indices(self, min_spacing_px: float, extend_by_one: bool = False) -> List[int]:
+        """Genera ticks en horarios redondos + continúa dibujando ticks en el espacio vacío a la derecha."""
+        if not self._timestamps or self.total_bars == 0:
+            return []
+
+        vr = self.get_visible_range()
+        vs = max(0, int(vr.start_idx))
+        ve = min(self.total_bars - 1, int(vr.end_idx))
+
+        if vs >= ve:
+            return [vs]
+
+        start_ts = self._timestamps[vs]
+        last_real_ts = self._timestamps[ve]          # Última vela real (activa)
+
+        visible_duration_sec = (last_real_ts - start_ts).total_seconds()
+
+        # === 1. Determinar intervalo según zoom ===
+        if visible_duration_sec < 900:          # < 15 minutos
+            step_minutes = 1
+        elif visible_duration_sec < 3600:       # < 1 hora
+            step_minutes = 5
+        elif visible_duration_sec < 10800:      # < 3 horas
+            step_minutes = 10
+        elif visible_duration_sec < 21600:      # < 6 horas
+            step_minutes = 15
+        else:
+            step_minutes = 30
+
+        # === 2. Generar ticks normales hasta la última vela real ===
+        nice_ticks: List[datetime] = []
+        current = start_ts.replace(second=0, microsecond=0)
+        minute = (current.minute // step_minutes) * step_minutes
+        current = current.replace(minute=minute, second=0, microsecond=0)
+
+        while current <= last_real_ts + timedelta(minutes=step_minutes * 2):
+            nice_ticks.append(current)
+            current += timedelta(minutes=step_minutes)
+
+        # Convertir a índices reales
+        indices = []
+        for ts in nice_ticks:
+            idx = self._find_closest_index(ts)
+            if 0 <= idx < self.total_bars:
+                indices.append(idx)
+                
+
+        indices = sorted(set(indices))
+        
+        # === 3. LÓGICA EXTRA: Continuar ticks en el espacio vacío a la derecha ===
+        if indices:
+            last_idx = indices[-1]
+            last_ts = self._timestamps[last_idx] if last_idx < len(self._timestamps) else last_real_ts
+
+            # Posición de la última vela real
+            last_x = self.get_aligned_x(last_idx)
+
+            # Posición del borde derecho visible (respetando right_padding_px)
+            right_edge_x = self.view_x + self.view_w - self.right_padding_px
+
+            current_ts = last_ts
+            current_idx = last_idx   # índice virtual
+
+            while True:
+                current_ts += timedelta(minutes=step_minutes)
+                current_idx += 1
+
+                x_pos = self.index_to_x(current_idx)   # calcula posición aunque no exista la vela
+
+                # Si ya pasamos el borde derecho, paramos
+                if x_pos > right_edge_x:
+                    break
+
+                # Solo agregamos si mantiene buena separación
+                if x_pos - last_x >= min_spacing_px * 0.9:
+                    indices.append(current_idx)
+                    last_x = x_pos
+                    last_ts = current_ts
+
+        # === 4. Filtrado final por espaciado en píxeles ===
+        if min_spacing_px > 0 and len(indices) > 1:
+            filtered = [indices[0]]
+            last_x = self.get_aligned_x(indices[0])
+
+            for i in indices[1:]:
+                x = self.get_aligned_x(i)
+                if x - last_x >= min_spacing_px:
+                    filtered.append(i)
+                    last_x = x
+            indices = filtered
+
+        # === 5. Extend by one ===
+        if extend_by_one and indices:
+            if indices[0] > 0:
+                indices.insert(0, indices[0] - 1)
+            # Permitimos un poco más allá de la última vela real
+            indices.append(indices[-1] + 1)
+
+        
+    
+        return sorted(set(indices))
+
+    def _find_closest_index(self, target_ts: datetime) -> int:
+        """Busca el índice más cercano (permite extrapolación)"""
+        if not self._timestamps:
+            return 0
+
+        left, right = 0, len(self._timestamps) - 1
+        while left <= right:
+            mid = (left + right) // 2
+            if self._timestamps[mid] == target_ts:
+                return mid
+            elif self._timestamps[mid] < target_ts:
+                left = mid + 1
+            else:
+                right = mid - 1
+
+        if left >= len(self._timestamps):
+            return len(self._timestamps) - 1
+        if left == 0:
+            return 0
+
+        if abs((self._timestamps[left] - target_ts).total_seconds()) < \
+           abs((self._timestamps[left - 1] - target_ts).total_seconds()):
+            return left
+        return left - 1
+
+    # ====================== INTERNOS ======================
     @property
     def _last_data_index(self) -> float:
         return self.total_bars - 1.0
@@ -2100,17 +2247,12 @@ class TimeScale:
             end_idx=end_idx,
         )
 
-    # ====================== MÉTODOS PARA DIBUJO ======================
     def index_to_x(self, index: int | float) -> float:
         if self.total_bars <= 0:
             return self.view_x
-        
         bars_from_last = self._last_data_index - float(index)
         x = self._right_anchor_x() - bars_from_last * self.bar_spacing
-        
-        # ← NUEVO: Aplicar padding derecho para que nunca invada el price axis
         x -= self.right_padding_px
-        
         return x
 
     def x_to_index(self, x: float) -> int:
@@ -2122,42 +2264,10 @@ class TimeScale:
     def get_px_per_bar(self) -> float:
         return max(1.0, self.bar_spacing)
 
-    def get_tick_indices(self, min_spacing_px: float, extend_by_one: bool = False) -> List[int]:
-        """Versión mejorada: etiquetas más estables y suaves al panear en TODOS los zooms"""
-        vr = self.get_visible_range()
-        vs = int(vr.start_idx)
-        ve = int(vr.end_idx)
-
-        if self.total_bars <= 0 or ve < vs:
-            return []
-
-        px_per_bar = self.get_px_per_bar()
-        # Calculamos step de forma más inteligente
-        step = max(1, math.ceil(min_spacing_px / px_per_bar))
-
-        # Alineamos el primer tick para que las etiquetas se sientan "pegadas" y no salten al panear
-        offset = vs % step
-        start_idx = vs + (step - offset) % step
-        if start_idx > ve:
-            start_idx = vs
-
-        indices = list(range(start_idx, ve + 1, step))
-
-        # Incluimos un tick extra en los bordes para que aparezcan/desaparezcan suavemente
-        if extend_by_one and indices:
-            if indices[0] > 0:
-                indices.insert(0, indices[0] - step)
-            if indices[-1] < self.total_bars - 1:
-                indices.append(indices[-1] + step)
-
-        # Filtramos solo índices válidos
-        return [i for i in indices if 0 <= i < self.total_bars]
-    
     def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:
-        """VERSIÓN FUERTE: usa round() + 0.5 para alineación perfecta en TODOS los zooms"""
         x = float(self.index_to_x(index))
         if crisp:
-            x = round(x) + 0.5          # ← cambio clave
+            x = round(x) + 0.5
         return x
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\series\__init__.py

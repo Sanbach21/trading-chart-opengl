@@ -117,60 +117,107 @@ class TimeScale:
         closest = min(nice_values, key=lambda x: abs(x - value))
         return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
 
-    # ====================== TICKS CON HORAS REDONDAS ======================
     def get_tick_indices(self, min_spacing_px: float, extend_by_one: bool = False) -> List[int]:
-        """Genera ticks en horarios redondos y permite dibujar en zonas sin velas"""
-        if not self._timestamps:
+        """Genera ticks en horarios redondos + continúa dibujando ticks en el espacio vacío a la derecha."""
+        if not self._timestamps or self.total_bars == 0:
             return []
 
         vr = self.get_visible_range()
         vs = max(0, int(vr.start_idx))
         ve = min(self.total_bars - 1, int(vr.end_idx))
 
+        if vs >= ve:
+            return [vs]
+
         start_ts = self._timestamps[vs]
-        end_ts = self._timestamps[ve]
+        last_real_ts = self._timestamps[ve]          # Última vela real (activa)
 
-        visible_duration = (end_ts - start_ts).total_seconds()
+        visible_duration_sec = (last_real_ts - start_ts).total_seconds()
 
-        # Intervalo según zoom
-        if visible_duration < 1800:        # < 30 min
+        # === 1. Determinar intervalo según zoom ===
+        if visible_duration_sec < 900:          # < 15 minutos
             step_minutes = 1
-        elif visible_duration < 7200:      # < 2 horas
+        elif visible_duration_sec < 3600:       # < 1 hora
             step_minutes = 5
-        elif visible_duration < 21600:     # < 6 horas
+        elif visible_duration_sec < 10800:      # < 3 horas
             step_minutes = 10
-        elif visible_duration < 43200:
+        elif visible_duration_sec < 21600:      # < 6 horas
             step_minutes = 15
         else:
             step_minutes = 30
 
-        # Generar timestamps redondos
+        # === 2. Generar ticks normales hasta la última vela real ===
         nice_ticks: List[datetime] = []
         current = start_ts.replace(second=0, microsecond=0)
-
         minute = (current.minute // step_minutes) * step_minutes
         current = current.replace(minute=minute, second=0, microsecond=0)
 
-        while current <= end_ts + timedelta(minutes=step_minutes * 2):
+        while current <= last_real_ts + timedelta(minutes=step_minutes * 2):
             nice_ticks.append(current)
             current += timedelta(minutes=step_minutes)
 
-        # Convertir a índices (permite extrapolación)
+        # Convertir a índices reales
         indices = []
         for ts in nice_ticks:
             idx = self._find_closest_index(ts)
-            if idx >= 0:
+            if 0 <= idx < self.total_bars:
                 indices.append(idx)
+                
 
         indices = sorted(set(indices))
+        
+        # === 3. LÓGICA EXTRA: Continuar ticks en el espacio vacío a la derecha ===
+        if indices:
+            last_idx = indices[-1]
+            last_ts = self._timestamps[last_idx] if last_idx < len(self._timestamps) else last_real_ts
 
+            # Posición de la última vela real
+            last_x = self.get_aligned_x(last_idx)
+
+            # Posición del borde derecho visible (respetando right_padding_px)
+            right_edge_x = self.view_x + self.view_w - self.right_padding_px
+
+            current_ts = last_ts
+            current_idx = last_idx   # índice virtual
+
+            while True:
+                current_ts += timedelta(minutes=step_minutes)
+                current_idx += 1
+
+                x_pos = self.index_to_x(current_idx)   # calcula posición aunque no exista la vela
+
+                # Si ya pasamos el borde derecho, paramos
+                if x_pos > right_edge_x:
+                    break
+
+                # Solo agregamos si mantiene buena separación
+                if x_pos - last_x >= min_spacing_px * 0.9:
+                    indices.append(current_idx)
+                    last_x = x_pos
+                    last_ts = current_ts
+
+        # === 4. Filtrado final por espaciado en píxeles ===
+        if min_spacing_px > 0 and len(indices) > 1:
+            filtered = [indices[0]]
+            last_x = self.get_aligned_x(indices[0])
+
+            for i in indices[1:]:
+                x = self.get_aligned_x(i)
+                if x - last_x >= min_spacing_px:
+                    filtered.append(i)
+                    last_x = x
+            indices = filtered
+
+        # === 5. Extend by one ===
         if extend_by_one and indices:
             if indices[0] > 0:
                 indices.insert(0, indices[0] - 1)
-            if indices[-1] < self.total_bars - 1:
-                indices.append(indices[-1] + 1)
+            # Permitimos un poco más allá de la última vela real
+            indices.append(indices[-1] + 1)
 
-        return indices
+        
+    
+        return sorted(set(indices))
 
     def _find_closest_index(self, target_ts: datetime) -> int:
         """Busca el índice más cercano (permite extrapolación)"""
