@@ -28,12 +28,12 @@ class TimeScale:
         min_bar_spacing: float = 0.15,
         max_bar_spacing: float = 300.0,
         max_right_offset: float = 500.0,
-        right_padding_px: float = 50.0,
+        right_padding_px: float = 10.0,
     ) -> None:
         self.bar_spacing = float(bar_spacing)
         self.min_bar_spacing = float(min_bar_spacing)
         self.max_bar_spacing = float(max_bar_spacing)
-        self.right_offset = float(right_offset)
+        self.right_offset = float(right_offset) 
 
         self.max_right_offset = float(max_right_offset)
         self.right_padding_px = float(right_padding_px)
@@ -174,6 +174,8 @@ class TimeScale:
         #    borde derecho visible menos el padding derecho.
         # ------------------------------------------------------
         right_edge_x = self.view_x + self.view_w - self.right_padding_px
+        
+        
 
         # Generamos un poco más para cubrir el future space.
         safety_steps = 500
@@ -183,7 +185,7 @@ class TimeScale:
 
             x = self.get_aligned_x(idx)
 
-            if x > right_edge_x + min_spacing_px:
+            if x >= right_edge_x + min_spacing_px:
                 break
 
             if x >= self.view_x - min_spacing_px * 2.0:

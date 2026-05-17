@@ -78,7 +78,7 @@ class GLFWWindow:
             min_bar_spacing=0.15,
             max_bar_spacing=300.0,
             max_right_offset=500.0,
-            right_padding_px=500.0,
+            right_padding_px=400.0,
         )
 
         self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)

@@ -122,7 +122,7 @@ class GridOverlay:
                 )
 
                 # Solo dibujar dentro del área del gráfico
-                if plot_x - 5 <= x <= plot_right + 5:
+                if plot_x - 5 <= x <= plot_right + 5 + self.time_scale.right_padding_px:
                     renderer.draw_line_px(
                         x,
                         plot_y,
