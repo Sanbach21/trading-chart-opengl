@@ -102,27 +102,27 @@ class GridOverlay:
                     width=self.style.major_width,
                 )
 
-               # ======================================================
+                # ======================================================
         # GRID VERTICAL
-        # ======================================================
+# ======================================================
 
         if self.style.show_vertical:
 
             tick_indices = self.time_scale.get_tick_indices(
                 min_spacing_px=self.style.vertical_min_spacing_px,
-                extend_by_one=True,
+                extend_by_one=False,
             )
 
             plot_right = plot_x + plot_w
 
             for i in tick_indices:
                 x = self.time_scale.get_aligned_x(
-                    i, 
+                    i,
                     crisp=self.style.crisp_vertical_lines
                 )
 
-                # Solo dibujar dentro del área del gráfico
-                if plot_x - 5 <= x <= plot_right + 5 + self.time_scale.right_padding_px:
+                # Cortar en el borde real del plot, no en el right_padding
+                if plot_x <= x <= plot_right:
                     renderer.draw_line_px(
                         x,
                         plot_y,

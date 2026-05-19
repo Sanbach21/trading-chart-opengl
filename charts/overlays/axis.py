@@ -136,7 +136,7 @@ class TimeAxisOverlay:
 
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.min_label_spacing_px,
-            extend_by_one=True,
+            extend_by_one=False,
         )
 
         max_allowed_x = plot_x + plot_w

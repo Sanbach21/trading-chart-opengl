@@ -126,6 +126,12 @@ class GLFWWindow:
         self.grid_overlay = None
         self.tooltip_overlay: TooltipOverlay | None = None
 
+        self._pan_sensitivity = 2.0   # ← Cambia este valor
+        # 1.0  = velocidad normal (actual)
+        # 1.3  = un poco más rápido (recomendado)
+        # 1.6  = bastante rápido
+        # 2.0  = muy rápido
+
     def init(self) -> None:
         if not glfw.init():
             raise RuntimeError("No se pudo inicializar GLFW")
@@ -294,6 +300,7 @@ class GLFWWindow:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         self._update_layout_scales(fb_w, fb_h)
 
+        # ==================== SCROLL ====================
         if self.input.mouse.scroll_y != 0.0:
             self._scroll_accum += self.input.mouse.scroll_y
             if abs(self._scroll_accum) >= self._scroll_step:
@@ -310,13 +317,17 @@ class GLFWWindow:
 
                 self._scroll_accum -= scroll_to_apply
 
+        # ==================== PAN (ARRastre) ====================
         if self.input.mouse.left:
             if self._drag_mode == "time-pan" and abs(self.input.mouse.dx) > 0.0:
-                self.time_scale.pan_by_pixels(-self.input.mouse.dx)
+                # Aquí aplicamos la sensibilidad
+                adjusted_dx = -self.input.mouse.dx * self._pan_sensitivity
+                self.time_scale.pan_by_pixels(adjusted_dx)
+
             elif self._drag_mode == "price-scale" and abs(self.input.mouse.dy) > 0.0:
                 self.price_scale.scale_to(self.input.mouse.y)
 
-        # Actualización de escala de precios
+        # ==================== AUTOSCALE DE PRECIO ====================
         vr = self.time_scale.get_visible_range()
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             if not self._price_manual_mode:
