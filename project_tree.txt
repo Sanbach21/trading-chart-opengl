@@ -307,6 +307,12 @@ class GLFWWindow:
         self.grid_overlay = None
         self.tooltip_overlay: TooltipOverlay | None = None
 
+        self._pan_sensitivity = 2.0   # ← Cambia este valor
+        # 1.0  = velocidad normal (actual)
+        # 1.3  = un poco más rápido (recomendado)
+        # 1.6  = bastante rápido
+        # 2.0  = muy rápido
+
     def init(self) -> None:
         if not glfw.init():
             raise RuntimeError("No se pudo inicializar GLFW")
@@ -475,6 +481,7 @@ class GLFWWindow:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         self._update_layout_scales(fb_w, fb_h)
 
+        # ==================== SCROLL ====================
         if self.input.mouse.scroll_y != 0.0:
             self._scroll_accum += self.input.mouse.scroll_y
             if abs(self._scroll_accum) >= self._scroll_step:
@@ -491,13 +498,17 @@ class GLFWWindow:
 
                 self._scroll_accum -= scroll_to_apply
 
+        # ==================== PAN (ARRastre) ====================
         if self.input.mouse.left:
             if self._drag_mode == "time-pan" and abs(self.input.mouse.dx) > 0.0:
-                self.time_scale.pan_by_pixels(-self.input.mouse.dx)
+                # Aquí aplicamos la sensibilidad
+                adjusted_dx = -self.input.mouse.dx * self._pan_sensitivity
+                self.time_scale.pan_by_pixels(adjusted_dx)
+
             elif self._drag_mode == "price-scale" and abs(self.input.mouse.dy) > 0.0:
                 self.price_scale.scale_to(self.input.mouse.y)
 
-        # Actualización de escala de precios
+        # ==================== AUTOSCALE DE PRECIO ====================
         vr = self.time_scale.get_visible_range()
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             if not self._price_manual_mode:
@@ -928,7 +939,7 @@ class TimeAxisOverlay:
 
         tick_indices = self.time_scale.get_tick_indices(
             min_spacing_px=self.style.min_label_spacing_px,
-            extend_by_one=True,
+            extend_by_one=False,
         )
 
         max_allowed_x = plot_x + plot_w
@@ -1291,7 +1302,7 @@ class GridStyle:
     show_horizontal: bool = True
 
     major_color: Tuple[float, float, float, float] = (
-        0.10, 0.10, 0.10, 0.90,
+        0.18, 0.18, 0.18, 0.40,
     )
     major_width: float = 1.0
 
@@ -1300,7 +1311,7 @@ class GridStyle:
     vertical_min_spacing_px: float = 90.0
 
     vertical_major_color: Tuple[float, float, float, float] = (
-        0.10, 0.10, 0.10, 0.90,
+        0.18, 0.18, 0.18, 0.40,
     )
     vertical_major_width: float = 1.0
 
@@ -1375,27 +1386,27 @@ class GridOverlay:
                     width=self.style.major_width,
                 )
 
-               # ======================================================
+                # ======================================================
         # GRID VERTICAL
-        # ======================================================
+# ======================================================
 
         if self.style.show_vertical:
 
             tick_indices = self.time_scale.get_tick_indices(
-                min_spacing_px=self.style.vertical_min_spacing_px,
-                extend_by_one=True,
+                min_spacing_px=self.style.vertical_min_spacing_px ,
+                extend_by_one=False,
             )
-
-            plot_right = plot_x + plot_w
+            
+            plot_right = plot_x + plot_w 
 
             for i in tick_indices:
                 x = self.time_scale.get_aligned_x(
-                    i, 
+                    i,
                     crisp=self.style.crisp_vertical_lines
                 )
 
-                # Solo dibujar dentro del área del gráfico
-                if plot_x - 5 <= x <= plot_right + 5 + self.time_scale.right_padding_px:
+                # Cortar en el borde real del plot, no en el right_padding
+                if plot_x <= x <= plot_right:
                     renderer.draw_line_px(
                         x,
                         plot_y,
@@ -2307,7 +2318,7 @@ class TimeScale:
     def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:
         x = float(self.index_to_x(index))
         if crisp:
-            x = round(x) + 0.5
+            x = round(x) + 1.0
         return x
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\series\__init__.py

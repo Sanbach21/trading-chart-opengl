@@ -377,5 +377,5 @@ class TimeScale:
     def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:
         x = float(self.index_to_x(index))
         if crisp:
-            x = round(x) + 0.5
+            x = round(x) + 1.0
         return x

@@ -44,6 +44,7 @@ class CandleSeries:
         self.data = data
         self.style = style or CandleStyle()
         self._initial_bar_spacing: Optional[float] = None
+        self.time_scale = TimeScale()
 
     def reset_initial_spacing(self) -> None:
         self._initial_bar_spacing = None
@@ -98,8 +99,11 @@ class CandleSeries:
                 continue
 
             d = self.data[i]
-
-            x_center = round(time_scale.index_to_x(i)) + st.x_offset_px
+            
+            x_center = time_scale.get_aligned_x(i, crisp=True)
+            if x_center > time_scale.get_right_draw_limit() + 2.0:   # ← Agregá esta línea
+                break
+           
             half = bar_width / 2.0
             left = round(x_center - half)
             right = left + bar_width

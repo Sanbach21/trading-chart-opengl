@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 from charts.overlays.chart_overlay import ChartOverlay
+from charts.scales import time_scale
 from charts.scales.price_scale import PriceScale
 from charts.scales.time_scale import TimeScale
 from render.renderer import Renderer2D
@@ -18,7 +19,7 @@ class GridStyle:
     show_horizontal: bool = True
 
     major_color: Tuple[float, float, float, float] = (
-        0.10, 0.10, 0.10, 0.90,
+        0.18, 0.18, 0.18, 0.40,
     )
     major_width: float = 1.0
 
@@ -27,7 +28,7 @@ class GridStyle:
     vertical_min_spacing_px: float = 90.0
 
     vertical_major_color: Tuple[float, float, float, float] = (
-        0.10, 0.10, 0.10, 0.90,
+        0.18, 0.18, 0.18, 0.40,
     )
     vertical_major_width: float = 1.0
 
@@ -105,29 +106,22 @@ class GridOverlay:
                 # ======================================================
         # GRID VERTICAL
 # ======================================================
-
         if self.style.show_vertical:
-
-            tick_indices = self.time_scale.get_tick_indices(
-                min_spacing_px=self.style.vertical_min_spacing_px,
-                extend_by_one=False,
-            )
-
-            plot_right = plot_x + plot_w
-
-            for i in tick_indices:
-                x = self.time_scale.get_aligned_x(
-                    i,
-                    crisp=self.style.crisp_vertical_lines
-                )
-
-                # Cortar en el borde real del plot, no en el right_padding
-                if plot_x <= x <= plot_right:
-                    renderer.draw_line_px(
-                        x,
-                        plot_y,
-                        x,
-                        plot_y + plot_h,
+         tick_indices = self.time_scale.get_tick_indices(
+            min_spacing_px=self.style.vertical_min_spacing_px,
+            extend_by_one=False,
+        )
+        
+        for i in tick_indices:
+            x = self.time_scale.get_aligned_x(i, crisp=True) 
+            
+            if x > self.time_scale.get_right_draw_limit() + 1:   # valor fuerte
+                break
+            renderer.draw_line_px(
+                        x, plot_y, x, plot_y + plot_h,
                         color=self.style.vertical_major_color,
                         width=self.style.vertical_major_width,
                     )
+
+                
+                    

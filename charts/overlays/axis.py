@@ -146,6 +146,8 @@ class TimeAxisOverlay:
                 continue
 
             x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_ticks)
+            if x > self.time_scale.get_right_draw_limit() + 1:   # ← Agregá esta línea
+             break
 
             if x < plot_x - 40 or x > max_allowed_x + 20:
                 continue
