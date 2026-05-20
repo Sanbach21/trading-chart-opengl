@@ -49,7 +49,7 @@ class PriceAxisOverlay:
         # Solo usamos major ticks (evita duplicados)
         ticks = self.price_scale.get_ticks_ex(
             target_major=self.style.target_major_ticks,
-            minor_divisions=0
+            minor_divisions=2
         )
 
         self._last_label_y = -9999.0
