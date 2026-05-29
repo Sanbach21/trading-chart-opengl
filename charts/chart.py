@@ -45,7 +45,7 @@ class Chart:
     def add_overlay(self, overlay: Any, layer: str = "base", pane_name: str = "main") -> None:
         for pane in self.pane_manager.panes:
             if pane.name == pane_name:
-                pane.add_overlay(overlay)
+                pane.add_overlay(overlay, layer=layer)
                 return
         new_pane = Pane(pane_name, height_ratio=1.0)
         new_pane.add_overlay(overlay)

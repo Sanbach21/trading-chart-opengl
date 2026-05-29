@@ -1,0 +1,1 @@
+from .local_price_scale import LocalPriceScale

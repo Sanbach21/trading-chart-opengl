@@ -262,10 +262,13 @@ class GLFWWindow:
             right_padding_px=100.0,
         )
 
-        self.price_scale = PriceScale(y_down=True, top_padding_px=12, bottom_padding_px=12)
+        self.price_scale = PriceScale(y_down=True, top_padding_px=8.0, bottom_padding_px=8.0)
         self.chart_overlay = ChartOverlay(time_scale=self.time_scale, price_scale=self.price_scale)
         self.chart = Chart()
         self.chart.set_scales(self.time_scale, self.price_scale)
+
+        # ── NOTA: self.series se crea más abajo, después de cargar los datos.
+        # NO crear CrosshairOverlay aquí — se hace en init() cuando ya existe self.series.
 
         # Datos
         self.live_feed: BinanceWSFeed | None = None
@@ -300,16 +303,16 @@ class GLFWWindow:
         self.chart.add_indicator(sma_20, pane_name="main")
         self.chart.add_indicator(sma_50, pane_name="main")
 
-        # Overlays
+        # Overlays (se instancian en init() para tener text_renderer disponible)
         self.price_axis_overlay = None
         self.time_axis_overlay = None
         self.crosshair_overlay = None
         self.grid_overlay = None
         self.tooltip_overlay: TooltipOverlay | None = None
 
-        self._pan_sensitivity = 2.0   # ← Cambia este valor
-        # 1.0  = velocidad normal (actual)
-        # 1.3  = un poco más rápido (recomendado)
+        self._pan_sensitivity = 2.0
+        # 1.0  = velocidad normal
+        # 1.3  = un poco más rápido
         # 1.6  = bastante rápido
         # 2.0  = muy rápido
 
@@ -344,10 +347,17 @@ class GLFWWindow:
         )
         self.text_renderer.init_gl()
 
-        # Crear overlays
+        # ── Crear overlays ───────────────────────────────────────────────────
         self.price_axis_overlay = PriceAxisOverlay(self.chart_overlay, self.price_scale)
-        self.time_axis_overlay = TimeAxisOverlay(self.chart_overlay, self.time_scale)
-        self.crosshair_overlay = CrosshairOverlay(self.chart_overlay, self.input, self.series)
+        self.time_axis_overlay  = TimeAxisOverlay(self.chart_overlay, self.time_scale)
+
+        # CrosshairOverlay se crea aquí porque self.series ya existe
+        self.crosshair_overlay = CrosshairOverlay(
+            self.chart_overlay,
+            self.input,
+            self.series,
+        )
+
         self.grid_overlay = GridOverlay(
             overlay=self.chart_overlay,
             price_scale=self.price_scale,
@@ -361,24 +371,28 @@ class GLFWWindow:
             text_renderer=self.text_renderer,
         )
 
-        self.price_axis_overlay.text_renderer = self.text_renderer
-        self.time_axis_overlay.text_renderer = self.text_renderer
+        # ── Inyectar text_renderer y price_scale a los overlays que lo necesitan
+        self.price_axis_overlay.text_renderer  = self.text_renderer
+        self.time_axis_overlay.text_renderer   = self.text_renderer
 
-        # Orden de dibujo
+        # ✅ Crosshair necesita text_renderer para los badges y price_scale para y_to_price()
+        self.crosshair_overlay.text_renderer   = self.text_renderer
+        self.crosshair_overlay.price_scale     = self.price_scale
+
+        # ── Orden de dibujo ──────────────────────────────────────────────────
         self.chart.add_series(self.series, pane_name="main")
-        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.grid_overlay, layer="base", pane_name="main")
-
+        self.chart.add_overlay(self.chart_overlay,      layer="base",  pane_name="main")
+        self.chart.add_overlay(self.grid_overlay,       layer="base",  pane_name="main")
         self.chart.add_overlay(self.price_axis_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.time_axis_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.tooltip_overlay, layer="front", pane_name="main")
+        self.chart.add_overlay(self.time_axis_overlay,  layer="front", pane_name="main")
+        self.chart.add_overlay(self.crosshair_overlay,  layer="front", pane_name="main")
+        self.chart.add_overlay(self.tooltip_overlay,    layer="front", pane_name="main")
 
-        # ==================== CALLBACKS ====================
-        glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
-        glfw.set_mouse_button_callback(self.window, self._on_mouse_button)
-        glfw.set_scroll_callback(self.window, self._on_scroll)
-        glfw.set_framebuffer_size_callback(self.window, self._on_resize)   # ← Importante
+        # ── Callbacks ────────────────────────────────────────────────────────
+        glfw.set_cursor_pos_callback(self.window,       self._on_cursor_pos)
+        glfw.set_mouse_button_callback(self.window,     self._on_mouse_button)
+        glfw.set_scroll_callback(self.window,           self._on_scroll)
+        glfw.set_framebuffer_size_callback(self.window, self._on_resize)
 
         self._update_layout_scales(fb_w, fb_h)
 
@@ -390,14 +404,14 @@ class GLFWWindow:
             )
             self.live_feed.start()
 
-    # ==================== RESIZE CALLBACK ====================
+    # ── Resize ───────────────────────────────────────────────────────────────
     def _on_resize(self, window, width: int, height: int) -> None:
         fb_w, fb_h = glfw.get_framebuffer_size(window)
         self._update_layout_scales(fb_w, fb_h)
         if self.text_renderer is not None:
             self.text_renderer.update_projection(fb_w, fb_h)
 
-    # ==================== OTROS MÉTODOS (sin cambios) ====================
+    # ── Layout helpers ───────────────────────────────────────────────────────
     def _chart_rect(self) -> tuple[float, float, float, float]:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         chart_w = max(1.0, fb_w - self._price_axis_width_px)
@@ -439,9 +453,10 @@ class GLFWWindow:
         vr = self.time_scale.get_visible_range()
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             self.price_scale.autoscale_from_provider(
-                vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.012 
+                vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.012
             )
 
+    # ── Callbacks de input ───────────────────────────────────────────────────
     def _on_cursor_pos(self, window, x: float, y: float) -> None:
         self.input.mouse.dx = x - self.input.mouse.x
         self.input.mouse.dy = y - self.input.mouse.y
@@ -476,12 +491,13 @@ class GLFWWindow:
     def _on_scroll(self, window, xoffset: float, yoffset: float) -> None:
         self.input.mouse.scroll_y += yoffset
 
+    # ── Update ───────────────────────────────────────────────────────────────
     def update(self) -> None:
         self._update_live_feed()
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         self._update_layout_scales(fb_w, fb_h)
 
-        # ==================== SCROLL ====================
+        # Scroll
         if self.input.mouse.scroll_y != 0.0:
             self._scroll_accum += self.input.mouse.scroll_y
             if abs(self._scroll_accum) >= self._scroll_step:
@@ -498,17 +514,15 @@ class GLFWWindow:
 
                 self._scroll_accum -= scroll_to_apply
 
-        # ==================== PAN (ARRastre) ====================
+        # Pan
         if self.input.mouse.left:
             if self._drag_mode == "time-pan" and abs(self.input.mouse.dx) > 0.0:
-                # Aquí aplicamos la sensibilidad
                 adjusted_dx = -self.input.mouse.dx * self._pan_sensitivity
                 self.time_scale.pan_by_pixels(adjusted_dx)
-
             elif self._drag_mode == "price-scale" and abs(self.input.mouse.dy) > 0.0:
                 self.price_scale.scale_to(self.input.mouse.y)
 
-        # ==================== AUTOSCALE DE PRECIO ====================
+        # Autoscale de precio
         vr = self.time_scale.get_visible_range()
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             if not self._price_manual_mode:
@@ -517,7 +531,7 @@ class GLFWWindow:
                 )
             self.price_scale.set_range(
                 self.price_scale._range.low,
-                self.price_scale._range.high
+                self.price_scale._range.high,
             )
 
     def _update_live_feed(self) -> None:
@@ -551,8 +565,7 @@ class GLFWWindow:
                     changed = True
 
             elif ev.type == "status":
-                status = ev.payload
-                print(f"[Feed][{status.state.upper()}] {status.message}")
+                print(f"[Feed][{ev.payload.state.upper()}] {ev.payload.message}")
             elif ev.type == "error":
                 print(f"[Feed][ERROR] {ev.payload.message}")
 
@@ -570,6 +583,7 @@ class GLFWWindow:
                     vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.005
                 )
 
+    # ── Render ───────────────────────────────────────────────────────────────
     def render(self) -> None:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         glViewport(0, 0, fb_w, fb_h)
@@ -585,7 +599,6 @@ class GLFWWindow:
         self.chart.draw(self.renderer2d)
 
         if self.text_renderer is not None:
-            style = self.series.style
             ts = self.time_scale
             real_candle_width = self.series._compute_bar_width(ts.bar_spacing)
 
@@ -605,6 +618,7 @@ class GLFWWindow:
 
         self.renderer2d.end_frame()
 
+    # ── Loop principal ───────────────────────────────────────────────────────
     def run(self) -> None:
         self.init()
         try:
@@ -801,45 +815,181 @@ FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\ch
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\axis.py
 ================================================================================
+"""
+charts/overlays/axis.py
+
+Ejes (overlays) del chart:
+- PriceAxisOverlay: eje vertical de precios (ticks + etiquetas).
+- TimeAxisOverlay : eje horizontal de tiempo (ticks + etiquetas).
+
+Este módulo SOLO se encarga del renderizado visual:
+- calcula posiciones (x/y) usando PriceScale/TimeScale
+- dibuja líneas (ticks) y texto (labels) usando el renderer + TextRenderer
+
+La generación de ticks (valores) y la conversión precio<->y están en:
+- charts/scales/price_scale.py  (PriceScale.get_ticks_ex, price_to_y)
+- charts/scales/time_scale.py   (TimeScale.get_tick_indices, index_to_x)
+
+-------------------------------------------------------------------------------
+NOVEDADES / CAMBIOS
+-------------------------------------------------------------------------------
+1) Minor ticks en el eje de precios:
+   - Se dibujan usando ticks["minor"] provistos por price_scale.get_ticks_ex(...)
+   - minor_divisions es parametrizable (por ejemplo 2 o 4)
+   - Estilo independiente para minor ticks (largo, color, ancho)
+
+2) Etiquetas para minor ticks (OPCIONAL y parametrizable):
+   - Por defecto NO se dibujan labels en minors (para evitar saturación)
+   - Si activas show_minor_labels=True, dibuja texto en minors respetando
+     un espaciado mínimo y evitando solapes con majors.
+
+-------------------------------------------------------------------------------
+CÓMO CONFIGURAR (ejemplo)
+-------------------------------------------------------------------------------
+Al crear PriceAxisOverlay puedes pasar config dict:
+
+PriceAxisOverlay(..., config={
+    "show_minor": True,
+    "minor_divisions": 4,         # 2 ó 4 típicamente
+    "show_minor_labels": False,   # True si quieres labels en minors
+    "tick_minor_len": 6.0,
+    "tick_minor_width": 1.0,
+})
+
+-------------------------------------------------------------------------------
+Notas de legibilidad:
+- Las etiquetas de majors tienen su propio anti-solapamiento (min_label_gap_px)
+- Las etiquetas de minors tienen otro anti-solapamiento (minor_label_gap_px)
+- También evitamos poner minor labels demasiado cerca de major labels.
+-------------------------------------------------------------------------------
+"""
+
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Tuple, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+# Alias de tipo para un rectángulo (x, y, w, h)
 Rect = Tuple[float, float, float, float]
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# PRICE AXIS
+# ──────────────────────────────────────────────────────────────────────────────
+
 @dataclass
 class PriceAxisStyle:
+    """
+    Parámetros visuales del eje de precio (eje Y).
+
+    target_major_ticks:
+        Cantidad "ideal" de ticks mayores visibles.
+        PriceScale ajusta el step a valores "nice".
+
+    minor_divisions:
+        Cuántos minor ticks se dibujan ENTRE dos major ticks.
+        Ejemplos típicos:
+            2  => dos minor ticks entre majors
+            4  => cuatro minor ticks entre majors
+
+        Internamente se usa:
+            price_scale.get_ticks_ex(target_major=..., minor_divisions=N)
+        que genera ticks minor uniformemente entre majors.
+
+    min_label_gap_px:
+        Evita que las etiquetas de PRECIO (majors) se superpongan.
+
+    show_minor_labels + minor_label_gap_px:
+        Controlan si se dibujan etiquetas para minor ticks y su separación mínima.
+    """
+
+    # Padding interno para las etiquetas (espacio del texto dentro del price axis)
     padding_px: float = 6.0
+
+    # --- Major ticks ---
     tick_major_len: float = 9.0
-    tick_minor_len: float = 9.0
-    tick_width: float = 1.0
-    tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
+    tick_major_width: float = 1.0
+    tick_major_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
+
+    # --- Minor ticks ---
+    show_minor: bool = True
+    minor_divisions: int = 2
+    tick_minor_len: float = 6.0
+    tick_minor_width: float = 1.0
+    tick_minor_color: Tuple[float, float, float, float] = (0.62, 0.62, 0.62, 0.75)
+
+    # --- Labels (majors) ---
     decimals: int = 2
     target_major_ticks: int = 5
     label_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     label_scale: float = 1.0
-    min_label_gap_px: float = 8.0   # ← aumentado para evitar solapamientos
+    min_label_gap_px: float = 8.0
+
+    # --- Labels (minors) - OPCIONAL ---
+    show_minor_labels: bool = True
+    minor_label_scale: float = 1.0
+    minor_label_color: Tuple[float, float, float, float] = (0.62, 0.62, 0.62, 0.90)
+    minor_label_decimals: Optional[int] = None  # si None usa 'decimals'
+    minor_label_gap_px: float = 10.0            # separación mínima entre minor labels
+    minor_label_avoid_major_px: float = 6.0     # evita minor label demasiado cerca de major label
 
 
 class PriceAxisOverlay:
-    def __init__(self, overlay, price_scale, config: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Renderiza el eje vertical de precios.
+
+    Responsabilidad:
+    - Dibuja ticks (major y minor) a la derecha/izquierda del plot.
+    - Dibuja etiquetas para major ticks.
+    - Dibuja etiquetas para minor ticks SOLO si show_minor_labels=True.
+    - Filtra elementos fuera del área visible (plot rect).
+
+    Dependencias:
+    - overlay: ChartOverlay (layout: plot_rect, price_axis_rect, config del lado)
+    - price_scale: PriceScale (get_ticks_ex y price_to_y)
+    - text_renderer: TextRenderer (opcional, para labels)
+    """
+
+    def __init__(
+        self,
+        overlay: Any,
+        price_scale: Any,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.overlay = overlay
         self.price_scale = price_scale
-        self.text_renderer = None
-        self.style = PriceAxisStyle()
-        self._last_label_y: float = -9999.0  # Para evitar etiquetas superpuestas
+        self.text_renderer = None  # se setea desde window.py
 
+        self.style = PriceAxisStyle()
+
+        # Control anti-solapamiento para labels de majors
+        self._last_major_label_y: float = -9999.0
+
+        # Aplicar config externo si viene
         if config:
             for k, v in config.items():
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
 
     def _get_side(self) -> str:
+        """
+        Determina el lado donde se dibuja el eje ('left' o 'right').
+        Lo toma de ChartOverlay.config["price_axis"]["side"].
+        """
         return (self.overlay.config["price_axis"].get("side", "right") or "right").lower()
 
-    def draw(self, r) -> None:
+    def draw(self, r: Any) -> None:
+        """
+        Dibuja ticks y etiquetas del eje de precio.
+
+        Flujo:
+        1) Obtiene layout (plot_rect y price_axis_rect).
+        2) Pide ticks a PriceScale (major + minor).
+        3) Dibuja minor ticks (si show_minor).
+        4) Dibuja major ticks + labels (anti-solapamiento).
+        5) (Opcional) Dibuja labels de minors si show_minor_labels=True.
+        """
         layout = self.overlay.get_layout()
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
         ax, ay, aw, ah = layout.price_axis_rect
@@ -849,78 +999,238 @@ class PriceAxisOverlay:
 
         side = self._get_side()
 
-        # Solo usamos major ticks (evita duplicados)
+        # Sanitizar minor_divisions (permitimos >= 0)
+        minor_divs = int(self.style.minor_divisions)
+        if minor_divs < 0:
+            minor_divs = 0
+
+        # Ticks calculados por la escala:
         ticks = self.price_scale.get_ticks_ex(
-            target_major=self.style.target_major_ticks,
-            minor_divisions=0
+            target_major=int(self.style.target_major_ticks),
+            minor_divisions=minor_divs,
         )
 
-        self._last_label_y = -9999.0
+        majors: List[Tuple[float, float]] = ticks.get("major", []) or []
+        minors: List[Tuple[float, float]] = ticks.get("minor", []) or []
 
-        for price, y in ticks.get("major", []):
-            y = float(y)
-            if not (plot_y <= y <= plot_y + plot_h):
-                continue
+        # Reset anti-solapamiento majors
+        self._last_major_label_y = -9999.0
 
-            # Evitar etiquetas muy juntas
-            if abs(y - self._last_label_y) < self.style.min_label_gap_px:
-                continue
-
+        # Helper: calcula x1/x2 para tick según lado y largo
+        def tick_segment(length_px: float) -> Tuple[float, float]:
             if side == "left":
-                x1 = ax + aw - self.style.tick_major_len
+                x1 = ax + aw - length_px
                 x2 = ax + aw
             else:
                 x1 = ax
-                x2 = ax + self.style.tick_major_len
+                x2 = ax + length_px
+            return x1, x2
 
-            r.draw_line_px(x1, y, x2, y, color=self.style.tick_color, width=self.style.tick_width)
-            self._draw_label(r, price, y, side, ax, aw)
+        # Cache de y de majors para evitar duplicados / proximidad
+        major_ys = [float(y) for _, y in majors]
 
-            self._last_label_y = y
+        # ---------------------------------------------------------------------
+        # 1) Minor ticks (líneas)
+        # ---------------------------------------------------------------------
+        if self.style.show_minor and minor_divs > 0 and minors:
+            x1, x2 = tick_segment(float(self.style.tick_minor_len))
 
-    def _draw_label(self, r, price: float, y: float, side: str, ax: float, aw: float):
+            for _, y in minors:
+                y = float(y)
+
+                # dentro del área del plot
+                if not (plot_y <= y <= plot_y + plot_h):
+                    continue
+
+                # evitar "doble tick": minor demasiado cerca de un major
+                # (y viene como float; tolerancia pequeña)
+                if any(abs(y - my) < 0.6 for my in major_ys):
+                    continue
+
+                r.draw_line_px(
+                    x1, y, x2, y,
+                    color=self.style.tick_minor_color,
+                    width=float(self.style.tick_minor_width),
+                )
+
+        # ---------------------------------------------------------------------
+        # 2) Major ticks + labels
+        # ---------------------------------------------------------------------
+        x1, x2 = tick_segment(float(self.style.tick_major_len))
+
+        for price, y in majors:
+            y = float(y)
+
+            if not (plot_y <= y <= plot_y + plot_h):
+                continue
+
+            # evitar que se amontonen labels majors
+            if abs(y - self._last_major_label_y) < float(self.style.min_label_gap_px):
+                continue
+
+            # tick major
+            r.draw_line_px(
+                x1, y, x2, y,
+                color=self.style.tick_major_color,
+                width=float(self.style.tick_major_width),
+            )
+
+            # label major
+            self._draw_label(
+                price=float(price),
+                y=y,
+                side=side,
+                ax=ax,
+                aw=aw,
+                scale=float(self.style.label_scale),
+                color=self.style.label_color,
+                decimals=int(self.style.decimals),
+            )
+
+            self._last_major_label_y = y
+
+        # ---------------------------------------------------------------------
+        # 3) (OPCIONAL) Labels para minor ticks
+        # ---------------------------------------------------------------------
+        if self.style.show_minor_labels and self.text_renderer is not None and minors:
+            last_minor_label_y = -9999.0
+
+            # Nota:
+            # - Usamos un gap independiente para minor labels
+            # - Evitamos minor labels demasiado cerca de major labels
+            minor_decimals = (
+                int(self.style.minor_label_decimals)
+                if self.style.minor_label_decimals is not None
+                else int(self.style.decimals)
+            )
+
+            for price, y in minors:
+                y = float(y)
+
+                if not (plot_y <= y <= plot_y + plot_h):
+                    continue
+
+                # Evitar minor label demasiado cerca de un major label/tick
+                if any(abs(y - my) < float(self.style.minor_label_avoid_major_px) for my in major_ys):
+                    continue
+
+                # Evitar amontonamiento entre minor labels
+                if abs(y - last_minor_label_y) < float(self.style.minor_label_gap_px):
+                    continue
+
+                # También evitamos que el minor label choque con el último major label dibujado
+                if abs(y - self._last_major_label_y) < float(self.style.min_label_gap_px):
+                    continue
+
+                self._draw_label(
+                    price=float(price),
+                    y=y,
+                    side=side,
+                    ax=ax,
+                    aw=aw,
+                    scale=float(self.style.minor_label_scale),
+                    color=self.style.minor_label_color,
+                    decimals=minor_decimals,
+                )
+
+                last_minor_label_y = y
+
+    def _draw_label(
+        self,
+        *,
+        price: float,
+        y: float,
+        side: str,
+        ax: float,
+        aw: float,
+        scale: float,
+        color: Tuple[float, float, float, float],
+        decimals: int,
+    ) -> None:
+        """
+        Dibuja una etiqueta de precio en el eje.
+
+        Parámetros:
+        - price: valor numérico del precio
+        - y: coordenada vertical (en px)
+        - side: 'left' o 'right'
+        - ax, aw: rect del price axis
+        - scale: escala del texto (1.0 = normal)
+        - color: color RGBA del texto
+        - decimals: cantidad de decimales a mostrar
+
+        Nota:
+        - Solo dibuja si existe text_renderer.
+        - Se clampa para que no se salga del rect del eje.
+        """
         if self.text_renderer is None:
             return
 
-        label = f"{price:.{self.style.decimals}f}"
-        text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
-        
-        text_y = y + text_h * 0.35   # mejor centrado
+        label = f"{price:.{int(decimals)}f}"
+        text_w, text_h = self.text_renderer.measure_text(label, scale=float(scale))
+
+        # Ajuste vertical (baseline aproximada)
+        text_y = y + text_h * 0.35
 
         if side == "left":
-            text_x = ax + aw - self.style.padding_px - text_w
+            text_x = ax + aw - float(self.style.padding_px) - text_w
         else:
-            text_x = ax + self.style.tick_major_len + self.style.padding_px
+            text_x = ax + float(self.style.tick_major_len) + float(self.style.padding_px)
 
-        # Clamp para que no se salga del axis
+        # Clamp horizontal para que no se salga del eje
         text_x = max(ax + 2.0, min(text_x, ax + aw - text_w - 2.0))
 
         self.text_renderer.render_text(
-            label, 
-            text_x, 
+            label,
+            text_x,
             text_y,
-            scale=self.style.label_scale,
-            color=self.style.label_color
+            scale=float(scale),
+            color=color,
         )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# TIME AXIS
+# ──────────────────────────────────────────────────────────────────────────────
+
 @dataclass
 class TimeAxisStyle:
+    """
+    Parámetros visuales del eje de tiempo (eje X).
+    """
     padding_px: float = 6.0
     tick_len: float = 6.0
     tick_width: float = 1.0
     tick_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
+
+    # Espaciado mínimo entre etiquetas (para evitar amontonamiento)
     min_label_spacing_px: float = 90.0
+
     label_color: Tuple[float, float, float, float] = (0.68, 0.68, 0.68, 0.95)
     label_scale: float = 1.0
+
+    # "Crisp" para alinear a píxel entero y evitar blur
     crisp_ticks: bool = True
 
 
 class TimeAxisOverlay:
-    def __init__(self, overlay, time_scale, config: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Renderiza el eje horizontal de tiempo.
+
+    - Calcula índices de ticks con TimeScale.get_tick_indices(...)
+    - Dibuja ticks y etiquetas bajo el plot
+    """
+
+    def __init__(
+        self,
+        overlay: Any,
+        time_scale: Any,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.overlay = overlay
         self.time_scale = time_scale
         self.text_renderer = None
+
         self.style = TimeAxisStyle()
 
         if config:
@@ -928,9 +1238,8 @@ class TimeAxisOverlay:
                 if hasattr(self.style, k):
                     setattr(self.style, k, v)
 
-    def draw(self, r) -> None:
+    def draw(self, r: Any) -> None:
         layout = self.overlay.get_layout()
-
         ax, ay, aw, ah = layout.time_axis_rect
         plot_x, plot_y, plot_w, plot_h = layout.plot_rect
 
@@ -938,7 +1247,7 @@ class TimeAxisOverlay:
             return
 
         tick_indices = self.time_scale.get_tick_indices(
-            min_spacing_px=self.style.min_label_spacing_px,
+            min_spacing_px=float(self.style.min_label_spacing_px),
             extend_by_one=False,
         )
 
@@ -948,39 +1257,44 @@ class TimeAxisOverlay:
             if i < 0:
                 continue
 
-            x = self.time_scale.get_aligned_x(i, crisp=self.style.crisp_ticks)
-            if x > self.time_scale.get_right_draw_limit() + 1:   # ← Agregá esta línea
-             break
+            x = self.time_scale.get_aligned_x(i, crisp=bool(self.style.crisp_ticks))
 
-            if x < plot_x - 40 or x > max_allowed_x + 20:
+            # cortar si ya pasamos el límite de dibujo (coherente con candles/grid)
+            if x > self.time_scale.get_right_draw_limit() + 1.0:
+                break
+
+            # evitar ticks muy fuera de pantalla
+            if x < plot_x - 40.0 or x > max_allowed_x + 20.0:
                 continue
 
             # Tick del eje
             r.draw_line_px(
                 x, ay,
-                x, ay + self.style.tick_len,
+                x, ay + float(self.style.tick_len),
                 color=self.style.tick_color,
-                width=self.style.tick_width,
+                width=float(self.style.tick_width),
             )
 
             # Etiqueta
             if self.text_renderer is not None:
+                # timestamps reales o "future space"
                 if i < len(self.time_scale._timestamps):
                     ts: datetime = self.time_scale._timestamps[i]
                 else:
-                    # Future space
                     last_ts = self.time_scale._timestamps[-1]
                     minutes_extra = i - (len(self.time_scale._timestamps) - 1)
                     ts = last_ts + timedelta(minutes=minutes_extra)
 
                 label = ts.strftime("%I:%M %p")
 
-                text_w, text_h = self.text_renderer.measure_text(label, scale=self.style.label_scale)
+                text_w, text_h = self.text_renderer.measure_text(
+                    label, scale=float(self.style.label_scale)
+                )
 
                 text_x = x - text_w * 0.5
                 text_y = ay + ah - 6.0
 
-                # Evitar que se salga por la derecha
+                # clamp derecha
                 if text_x + text_w > max_allowed_x:
                     text_x = max_allowed_x - text_w
 
@@ -988,7 +1302,7 @@ class TimeAxisOverlay:
                     label,
                     text_x,
                     text_y,
-                    scale=self.style.label_scale,
+                    scale=float(self.style.label_scale),
                     color=self.style.label_color,
                 )
 ================================================================================
@@ -1098,10 +1412,58 @@ class ChartOverlay:
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\crosshair.py
 ================================================================================
+"""
+charts/overlays/crosshair.py
+============================
+Crosshair profesional para chart de trading.
+
+Características
+---------------
+- Cruz con CÍRCULO central en la intersección del cursor
+- Líneas punteadas (dashed) horizontales y verticales
+- Snap automático al centro de la vela más cercana (eje X)
+- Etiqueta de PRECIO flotante en el eje Y (badge con fondo)
+- Etiqueta de TIEMPO flotante en el eje X (badge con fondo)
+- Totalmente parametrizable via CrosshairStyle
+
+Dependencias
+------------
+- ChartOverlay  : layout (plot_rect, price_axis_rect, time_axis_rect)
+- InputState    : posición del mouse
+- CandleSeries  : datos para snap
+- Renderer2D    : draw_line_px, draw_circle_px, draw_rect_px, draw_text_px
+- TextRenderer  : measure_text, render_text  (vía crosshair.text_renderer)
+- PriceScale    : y_to_price   (vía crosshair.price_scale)
+- TimeScale     : index_to_x, get_visible_range, _timestamps
+
+Uso básico
+----------
+    crosshair = CrosshairOverlay(overlay, input_state, candle_series)
+    crosshair.text_renderer = my_text_renderer
+    crosshair.price_scale   = my_price_scale
+
+    # en el loop de render:
+    crosshair.draw(renderer)
+
+Personalización
+---------------
+    style = CrosshairStyle(
+        line_color        = (0.9, 0.9, 0.9, 0.6),
+        dash_px           = 6.0,
+        gap_px            = 5.0,
+        circle_radius     = 5.0,
+        label_padding_px  = 5.0,
+        snap_tolerance_px = 40.0,
+    )
+    crosshair = CrosshairOverlay(overlay, input_state, series, style=style)
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Tuple
+import math
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import List, Optional, Tuple
 
 from app.input import InputState
 from charts.overlays.chart_overlay import ChartOverlay
@@ -1109,88 +1471,599 @@ from charts.series.candles import CandleSeries
 from render.renderer import Color, Renderer2D
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# STYLE
+# ──────────────────────────────────────────────────────────────────────────────
+
 @dataclass
 class CrosshairStyle:
-    color: Tuple[float, float, float, float] = (0.9, 0.9, 0.9, 0.9)
-    width: float = 1.0
-    snap_to_bar: bool = False
+    """
+    Parámetros visuales del crosshair.
 
+    Atributos
+    ---------
+    line_color : RGBA
+        Color de las líneas punteadas del crosshair.
+    line_width : float
+        Grosor de las líneas en píxeles.
+
+    dash_px : float
+        Longitud de cada segmento visible de la línea punteada.
+    gap_px : float
+        Longitud del espacio (hueco) entre segmentos.
+    center_gap_px : float
+        Radio del hueco alrededor del círculo central donde NO se dibuja
+        la línea (para que el círculo quede limpio).
+
+    circle_radius : float
+        Radio exterior del círculo central (en la intersección del cursor).
+    circle_width : float
+        Grosor de la línea del círculo.
+    circle_color : RGBA
+        Color del círculo central. Si es None, usa line_color.
+    circle_fill : bool
+        Si True, rellena el círculo con circle_fill_color.
+    circle_fill_color : RGBA
+        Color de relleno del círculo (solo si circle_fill=True).
+
+    snap_to_bar : bool
+        Si True, el eje X hace snap al centro de la vela más cercana.
+    snap_tolerance_px : float
+        Distancia máxima (en px) para activar el snap.
+
+    show_price_label : bool
+        Muestra etiqueta de precio flotante en el eje Y.
+    show_time_label : bool
+        Muestra etiqueta de tiempo flotante en el eje X.
+
+    label_bg_color : RGBA
+        Color de fondo de los badges de precio y tiempo.
+    label_text_color : RGBA
+        Color del texto dentro de los badges.
+    label_border_color : RGBA
+        Color del borde del badge (None = sin borde).
+    label_padding_px : float
+        Padding interno del badge (horizontal y vertical).
+    label_scale : float
+        Escala del texto en los badges.
+    label_decimals : int
+        Decimales del precio mostrado en el badge.
+    time_format : str
+        Formato strftime para la etiqueta de tiempo.
+    """
+
+    # Líneas
+    line_color: Tuple[float, float, float, float] = (0.85, 0.85, 0.85, 0.65)
+    line_width: float = 1.0
+
+    # Patrón dash
+    dash_px: float = 6.0
+    gap_px: float = 5.0
+    center_gap_px: float = 10.0   # hueco alrededor del círculo
+
+    # Círculo central
+    circle_radius: float = 5.0
+    circle_width: float = 1.5
+    circle_color: Optional[Tuple[float, float, float, float]] = None  # None => usa line_color
+    circle_fill: bool = True
+    circle_fill_color: Tuple[float, float, float, float] = (0.85, 0.85, 0.85, 0.12)
+
+    # Snap al eje X
+    snap_to_bar: bool = True
+    snap_tolerance_px: float = 40.0
+
+    # Etiquetas flotantes
+    show_price_label: bool = True
+    show_time_label: bool = True
+    label_bg_color: Tuple[float, float, float, float] = (0.15, 0.15, 0.18, 0.95)
+    label_text_color: Tuple[float, float, float, float] = (0.92, 0.92, 0.92, 1.0)
+    label_border_color: Optional[Tuple[float, float, float, float]] = (0.5, 0.5, 0.5, 0.6)
+    label_padding_px: float = 5.0
+    label_scale: float = 1.0
+    label_decimals: int = 2
+    time_format: str = "%I:%M %p"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OVERLAY
+# ──────────────────────────────────────────────────────────────────────────────
 
 class CrosshairOverlay:
+    """
+    Renderiza el crosshair profesional sobre el chart.
+
+    El crosshair consiste en:
+    1. Línea vertical punteada  (con gap central alrededor del círculo)
+    2. Línea horizontal punteada (con gap central alrededor del círculo)
+    3. Círculo (y relleno opcional) en la intersección
+    4. Badge de precio en el eje Y
+    5. Badge de tiempo en el eje X
+
+    El objeto necesita que se le asignen externamente (desde window.py):
+        crosshair.text_renderer = <TextRenderer>
+        crosshair.price_scale   = <PriceScale>    # para y_to_price()
+    """
+
     def __init__(
         self,
         overlay: ChartOverlay,
         input_state: InputState,
         series: CandleSeries,
-        style: CrosshairStyle | None = None,
+        style: Optional[CrosshairStyle] = None,
     ) -> None:
-        self.overlay = overlay
-        self.input = input_state
-        self.series = series
-        self.style = style or CrosshairStyle()
+        self.overlay     = overlay
+        self.input       = input_state
+        self.series      = series
+        self.style       = style or CrosshairStyle()
 
-        self.snap_enabled = True
-        self.snap_tolerance_px = 40.0
+        # Asignados desde fuera (window.py)
+        self.text_renderer = None   # TextRenderer
+        self.price_scale   = None   # PriceScale  (necesita y_to_price)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Punto de entrada principal
+    # ──────────────────────────────────────────────────────────────────────────
 
     def draw(self, renderer: Renderer2D) -> None:
+        """
+        Dibuja el crosshair completo en el frame actual.
+
+        Pasos:
+        1. Verificar que el mouse esté dentro del plot.
+        2. Calcular snap X al centro de la vela más cercana.
+        3. Dibujar líneas punteadas (vertical y horizontal).
+        4. Dibujar círculo central.
+        5. Dibujar badge de precio en eje Y.
+        6. Dibujar badge de tiempo en eje X.
+        """
         layout = self.overlay.get_layout()
         px, py, pw, ph = layout.plot_rect
+
         if pw <= 0 or ph <= 0:
             return
 
         mx = float(self.input.mouse.x)
         my = float(self.input.mouse.y)
 
-        inside = (px <= mx <= px + pw) and (py <= my <= py + ph)
-        if not inside:
+        # Solo dibujar si el mouse está dentro del área del plot
+        if not (px <= mx <= px + pw and py <= my <= py + ph):
             return
 
-        col = Color(*self.style.color)
+        # ── Snap X ───────────────────────────────────────────────────────────
+        snap_x, snapped_idx = self._calc_snap_x(mx, px, pw)
 
-        snap_x = mx
+        s = self.style
+        line_col  = Color(*s.line_color)
+        circle_col = Color(*(s.circle_color if s.circle_color else s.line_color))
 
-        if self.snap_enabled and len(self.series.data) > 0:
-            vr = self.overlay.time_scale.get_visible_range()
-            vs = max(0, int(vr.start_idx))
-            ve = min(len(self.series.data) - 1, int(vr.end_idx))
-
-            if ve >= vs:
-                closest_idx = None
-                min_dist = float("inf")
-
-                for i in range(vs, ve + 1):
-                    cx = float(self.overlay.time_scale.index_to_x(i))
-
-                    # ignorar centros completamente fuera del área visible
-                    if cx < px - 100.0 or cx > px + pw + 100.0:
-                        continue
-
-                    d = abs(cx - mx)
-                    if d < min_dist:
-                        min_dist = d
-                        closest_idx = i
-
-                if closest_idx is not None and min_dist <= self.snap_tolerance_px:
-                    snap_x = float(self.overlay.time_scale.index_to_x(closest_idx))
-                    snap_x = max(px, min(px + pw, snap_x))
-
-        renderer.draw_line_px(
-            snap_x,
-            py,
-            snap_x,
-            py + ph,
-            color=col,
-            width=float(self.style.width),
+        # ── Líneas punteadas ─────────────────────────────────────────────────
+        self._draw_dashed_vertical(
+            renderer, snap_x, py, py + ph, my, line_col
+        )
+        self._draw_dashed_horizontal(
+            renderer, mx, py, py + ph, snap_x, my, line_col, px, px + pw
         )
 
-        renderer.draw_line_px(
-            px,
-            my,
-            px + pw,
-            my,
-            color=col,
-            width=float(self.style.width),
+        # ── Círculo central ──────────────────────────────────────────────────
+        self._draw_circle(renderer, snap_x, my, circle_col)
+
+        # ── Badge de precio (eje Y) ──────────────────────────────────────────
+        if s.show_price_label and self.text_renderer and self.price_scale:
+            self._draw_price_label(renderer, layout, my, py, ph)
+
+        # ── Badge de tiempo (eje X) ──────────────────────────────────────────
+        if s.show_time_label and self.text_renderer and snapped_idx is not None:
+            self._draw_time_label(renderer, layout, snap_x, snapped_idx, px, px + pw)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Snap X
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _calc_snap_x(
+        self,
+        mx: float,
+        plot_x: float,
+        plot_w: float,
+    ) -> Tuple[float, Optional[int]]:
+        """
+        Calcula la posición X final del crosshair y el índice de vela (si snap).
+
+        Retorna
+        -------
+        (snap_x, snapped_idx)
+            snap_x      : coordenada X donde se dibuja la línea vertical
+            snapped_idx : índice de la vela snapeada, o None si no hay snap
+        """
+        s = self.style
+
+        if not s.snap_to_bar or len(self.series.data) == 0:
+            return mx, None
+
+        vr  = self.overlay.time_scale.get_visible_range()
+        vs  = max(0, int(vr.start_idx))
+        ve  = min(len(self.series.data) - 1, int(vr.end_idx))
+
+        closest_idx: Optional[int] = None
+        min_dist = float("inf")
+
+        for i in range(vs, ve + 1):
+            cx = float(self.overlay.time_scale.index_to_x(i))
+            if cx < plot_x - 100.0 or cx > plot_x + plot_w + 100.0:
+                continue
+            d = abs(cx - mx)
+            if d < min_dist:
+                min_dist = d
+                closest_idx = i
+
+        if closest_idx is not None and min_dist <= s.snap_tolerance_px:
+            raw_x = float(self.overlay.time_scale.index_to_x(closest_idx))
+            snap_x = max(plot_x, min(plot_x + plot_w, raw_x))
+            return snap_x, closest_idx
+
+        return mx, None
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Líneas punteadas
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _draw_dashed_vertical(
+        self,
+        r: Renderer2D,
+        x: float,
+        y_top: float,
+        y_bot: float,
+        cursor_y: float,
+        color: Color,
+    ) -> None:
+        """
+        Dibuja la línea vertical punteada con un hueco central alrededor
+        del círculo (center_gap_px).
+
+        La línea va de y_top a y_bot, con gap en [cursor_y - center_gap_px,
+        cursor_y + center_gap_px].
+        """
+        gap = float(self.style.center_gap_px)
+        # Segmento superior: y_top → cursor_y - gap
+        self._draw_dashed_segment_v(r, x, y_top, cursor_y - gap, color)
+        # Segmento inferior: cursor_y + gap → y_bot
+        self._draw_dashed_segment_v(r, x, cursor_y + gap, y_bot, color)
+
+    def _draw_dashed_segment_v(
+        self,
+        r: Renderer2D,
+        x: float,
+        y_start: float,
+        y_end: float,
+        color: Color,
+    ) -> None:
+        """
+        Dibuja dashes verticales entre y_start e y_end en la columna x.
+        """
+        if y_start >= y_end:
+            return
+
+        dash = float(self.style.dash_px)
+        gap  = float(self.style.gap_px)
+        w    = float(self.style.line_width)
+        period = dash + gap
+
+        y = y_start
+        while y < y_end:
+            y1 = y
+            y2 = min(y + dash, y_end)
+            r.draw_line_px(x, y1, x, y2, color=color, width=w)
+            y += period
+
+    def _draw_dashed_horizontal(
+        self,
+        r: Renderer2D,
+        cursor_x: float,        # posición real del mouse (para el gap central)
+        plot_y: float,
+        plot_y_bot: float,
+        snap_x: float,          # puede diferir de cursor_x por snap
+        y: float,
+        color: Color,
+        x_left: float,
+        x_right: float,
+    ) -> None:
+        """
+        Dibuja la línea horizontal punteada con hueco alrededor del círculo.
+
+        El hueco se centra en snap_x (donde está el círculo).
+        """
+        gap = float(self.style.center_gap_px)
+        # Segmento izquierdo: x_left → snap_x - gap
+        self._draw_dashed_segment_h(r, y, x_left, snap_x - gap, color)
+        # Segmento derecho: snap_x + gap → x_right
+        self._draw_dashed_segment_h(r, y, snap_x + gap, x_right, color)
+
+    def _draw_dashed_segment_h(
+        self,
+        r: Renderer2D,
+        y: float,
+        x_start: float,
+        x_end: float,
+        color: Color,
+    ) -> None:
+        """
+        Dibuja dashes horizontales entre x_start y x_end en la fila y.
+        """
+        if x_start >= x_end:
+            return
+
+        dash = float(self.style.dash_px)
+        gap  = float(self.style.gap_px)
+        w    = float(self.style.line_width)
+        period = dash + gap
+
+        x = x_start
+        while x < x_end:
+            x1 = x
+            x2 = min(x + dash, x_end)
+            r.draw_line_px(x1, y, x2, y, color=color, width=w)
+            x += period
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Círculo central
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _draw_circle(
+        self,
+        r: Renderer2D,
+        cx: float,
+        cy: float,
+        color: Color,
+    ) -> None:
+        """
+        Dibuja el círculo central en la intersección del crosshair.
+
+        Si el renderer no soporta draw_circle_px, se aproxima con segmentos
+        de línea (polígono de 32 lados).
+
+        Parámetros
+        ----------
+        cx, cy : coordenadas del centro
+        color  : color del borde del círculo
+        """
+        s      = self.style
+        radius = float(s.circle_radius)
+        width  = float(s.circle_width)
+
+        # ── Relleno (opcional) ───────────────────────────────────────────────
+        if s.circle_fill:
+            fill_col = Color(*s.circle_fill_color)
+            if hasattr(r, "draw_circle_filled_px"):
+                r.draw_circle_filled_px(cx, cy, radius, color=fill_col)
+            else:
+                # Fallback: triángulos en abanico (aproximación)
+                self._draw_filled_circle_fallback(r, cx, cy, radius, fill_col)
+
+        # ── Borde ────────────────────────────────────────────────────────────
+        if hasattr(r, "draw_circle_px"):
+            r.draw_circle_px(cx, cy, radius, color=color, width=width)
+        else:
+            self._draw_circle_fallback(r, cx, cy, radius, color, width)
+
+    def _draw_circle_fallback(
+        self,
+        r: Renderer2D,
+        cx: float,
+        cy: float,
+        radius: float,
+        color: Color,
+        width: float,
+        segments: int = 32,
+    ) -> None:
+        """
+        Aproxima un círculo con ``segments`` segmentos de línea.
+        Se usa si el renderer no expone draw_circle_px.
+        """
+        step = (2.0 * math.pi) / segments
+        for i in range(segments):
+            a0 = step * i
+            a1 = step * (i + 1)
+            x0 = cx + radius * math.cos(a0)
+            y0 = cy + radius * math.sin(a0)
+            x1 = cx + radius * math.cos(a1)
+            y1 = cy + radius * math.sin(a1)
+            r.draw_line_px(x0, y0, x1, y1, color=color, width=width)
+
+    def _draw_filled_circle_fallback(
+        self,
+        r: Renderer2D,
+        cx: float,
+        cy: float,
+        radius: float,
+        color: Color,
+        segments: int = 32,
+    ) -> None:
+        """
+        Relleno aproximado: líneas horizontales para cubrir el disco.
+        """
+        step = (2.0 * radius) / segments
+        y = cy - radius
+        while y <= cy + radius:
+            half_chord = math.sqrt(max(0.0, radius ** 2 - (y - cy) ** 2))
+            r.draw_line_px(cx - half_chord, y, cx + half_chord, y, color=color, width=1.0)
+            y += step
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Badge de precio (eje Y)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _draw_price_label(
+        self,
+        r: Renderer2D,
+        layout,
+        mouse_y: float,
+        plot_y: float,
+        plot_h: float,
+    ) -> None:
+        """
+        Dibuja el badge de precio flotante en el eje Y, centrado en mouse_y.
+
+        El badge se posiciona dentro del price_axis_rect.
+        El precio se calcula con price_scale.y_to_price(mouse_y).
+
+        Parámetros
+        ----------
+        r       : Renderer2D
+        layout  : ChartLayout
+        mouse_y : coordenada Y del mouse
+        plot_y  : borde superior del plot
+        plot_h  : alto del plot
+        """
+        ax, ay, aw, ah = layout.price_axis_rect
+        s = self.style
+
+        # Convertir Y de pantalla a precio
+        try:
+            price = float(self.price_scale.y_to_price(mouse_y))
+        except Exception:
+            return
+
+        label = f"{price:.{int(s.label_decimals)}f}"
+
+        text_w, text_h = self.text_renderer.measure_text(
+            label, scale=float(s.label_scale)
         )
+
+        pad  = float(s.label_padding_px)
+        bw   = text_w + pad * 2.0   # ancho del badge
+        bh   = text_h + pad * 2.0   # alto del badge
+
+        # Centrar verticalmente en mouse_y
+        b_y  = mouse_y - bh * 0.5
+
+        # Clampar para que no salga del price_axis_rect
+        b_y  = max(ay, min(b_y, ay + ah - bh))
+
+        # Posición X: ocupa todo el ancho del price_axis
+        b_x  = ax
+
+        # ── Fondo del badge ──────────────────────────────────────────────────
+        bg_col = Color(*s.label_bg_color)
+        if hasattr(r, "draw_rect_px"):
+            r.draw_rect_px(b_x, b_y, bw, bh, color=bg_col)
+
+        # ── Borde del badge ──────────────────────────────────────────────────
+        if s.label_border_color and hasattr(r, "draw_rect_outline_px"):
+            border_col = Color(*s.label_border_color)
+            r.draw_rect_outline_px(b_x, b_y, bw, bh, color=border_col, width=1.0)
+
+        # ── Texto ────────────────────────────────────────────────────────────
+        text_x = b_x + pad
+        text_y = b_y + bh * 0.5 + text_h * 0.35   # centrado vertical
+
+        self.text_renderer.render_text(
+            label,
+            text_x,
+            text_y,
+            scale=float(s.label_scale),
+            color=s.label_text_color,
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Badge de tiempo (eje X)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _draw_time_label(
+        self,
+        r: Renderer2D,
+        layout,
+        snap_x: float,
+        bar_idx: int,
+        x_left: float,
+        x_right: float,
+    ) -> None:
+        """
+        Dibuja el badge de tiempo flotante en el eje X, centrado en snap_x.
+
+        El timestamp se resuelve desde time_scale._timestamps[bar_idx].
+
+        Parámetros
+        ----------
+        r        : Renderer2D
+        layout   : ChartLayout
+        snap_x   : coordenada X donde está el crosshair vertical
+        bar_idx  : índice de la vela snapeada
+        x_left   : borde izquierdo del plot
+        x_right  : borde derecho del plot
+        """
+        tax, tay, taw, tah = layout.time_axis_rect
+        s = self.style
+
+        # Resolver timestamp
+        ts = self._resolve_timestamp(bar_idx)
+        label = ts.strftime(s.time_format)
+
+        text_w, text_h = self.text_renderer.measure_text(
+            label, scale=float(s.label_scale)
+        )
+
+        pad = float(s.label_padding_px)
+        bw  = text_w + pad * 2.0
+        bh  = text_h + pad * 2.0
+
+        # Centrar horizontalmente en snap_x
+        b_x = snap_x - bw * 0.5
+
+        # Clampar para que no salga del time_axis_rect
+        b_x = max(tax, min(b_x, tax + taw - bw))
+
+        # Posición Y: parte superior del time_axis_rect
+        b_y = tay
+
+        # ── Fondo del badge ──────────────────────────────────────────────────
+        bg_col = Color(*s.label_bg_color)
+        if hasattr(r, "draw_rect_px"):
+            r.draw_rect_px(b_x, b_y, bw, bh, color=bg_col)
+
+        # ── Borde del badge ──────────────────────────────────────────────────
+        if s.label_border_color and hasattr(r, "draw_rect_outline_px"):
+            border_col = Color(*s.label_border_color)
+            r.draw_rect_outline_px(b_x, b_y, bw, bh, color=border_col, width=1.0)
+
+        # ── Texto ────────────────────────────────────────────────────────────
+        text_x = b_x + pad
+        text_y = b_y + bh * 0.5 + text_h * 0.35
+
+        self.text_renderer.render_text(
+            label,
+            text_x,
+            text_y,
+            scale=float(s.label_scale),
+            color=s.label_text_color,
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _resolve_timestamp(self, index: int) -> datetime:
+        """
+        Devuelve el datetime del índice dado.
+
+        Si el índice está fuera del rango de datos (espacio futuro),
+        extrapola sumando minutos al último timestamp conocido.
+
+        Parámetros
+        ----------
+        index : int
+            Índice de barra en time_scale.
+
+        Retorna
+        -------
+        datetime
+        """
+        timestamps = self.overlay.time_scale._timestamps
+
+        if index < len(timestamps):
+            return timestamps[index]
+
+        last_ts       = timestamps[-1]
+        extra_minutes = index - (len(timestamps) - 1)
+        return last_ts + timedelta(minutes=extra_minutes)
 ================================================================================
 FILE: C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\charts\overlays\dom.py
 ================================================================================
