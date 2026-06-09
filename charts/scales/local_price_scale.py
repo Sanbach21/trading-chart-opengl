@@ -214,51 +214,51 @@ class LocalPriceScale:
         # al iniciar manipulación manual, congelamos autoscale
         self._manual_range = PriceRange(self._range.low, self._range.high)
 
-    def scale_to(self, current_y: float) -> None:
-        """
-        Ajusta el rango manual en función del desplazamiento vertical.
-        """
-        if self._scale_anchor_y is None or self._scale_start_range is None or self._scale_anchor_price is None:
-            return
+    # def scale_to(self, current_y: float) -> None:
+    #     """
+    #     Ajusta el rango manual en función del desplazamiento vertical.
+    #     """
+    #     if self._scale_anchor_y is None or self._scale_start_range is None or self._scale_anchor_price is None:
+    #         return
 
-        current_y = float(current_y)
-        dy = current_y - self._scale_anchor_y
+    #     current_y = float(current_y)
+    #     dy = current_y - self._scale_anchor_y
 
-        start_low = self._scale_start_range.low
-        start_high = self._scale_start_range.high
-        start_rng = start_high - start_low
+    #     start_low = self._scale_start_range.low
+    #     start_high = self._scale_start_range.high
+    #     start_rng = start_high - start_low
 
-        if start_rng <= 1e-12:
-            return
+    #     if start_rng <= 1e-12:
+    #         return
 
-        # factor de zoom suave:
-        # dy > 0 => zoom out
-        # dy < 0 => zoom in
-        zoom_factor = math.exp(dy * 0.01)
+    #     # factor de zoom suave:
+    #     # dy > 0 => zoom out
+    #     # dy < 0 => zoom in
+    #     zoom_factor = math.exp(dy * 0.01)
 
-        new_rng = max(1e-9, start_rng * zoom_factor)
+    #     new_rng = max(1e-9, start_rng * zoom_factor)
 
-        _, y0, _, h = self._viewport
-        y_top, usable_h = self._usable_vertical_area()
+    #     _, y0, _, h = self._viewport
+    #     y_top, usable_h = self._usable_vertical_area()
 
-        if usable_h <= 1e-9:
-            return
+    #     if usable_h <= 1e-9:
+    #         return
 
-        rel = (self._scale_anchor_y - y_top) / usable_h
-        rel = max(0.0, min(1.0, rel))
+    #     rel = (self._scale_anchor_y - y_top) / usable_h
+    #     rel = max(0.0, min(1.0, rel))
 
-        if self.y_down:
-            anchor_t = 1.0 - rel
-        else:
-            anchor_t = rel
+    #     if self.y_down:
+    #         anchor_t = 1.0 - rel
+    #     else:
+    #         anchor_t = rel
 
-        anchor_price = self._scale_anchor_price
+    #     anchor_price = self._scale_anchor_price
 
-        new_low = anchor_price - anchor_t * new_rng
-        new_high = new_low + new_rng
+    #     new_low = anchor_price - anchor_t * new_rng
+    #     new_high = new_low + new_rng
 
-        self._range = PriceRange(new_low, new_high)
-        self._manual_range = PriceRange(new_low, new_high)
+    #     self._range = PriceRange(new_low, new_high)
+    #     self._manual_range = PriceRange(new_low, new_high)
 
     def end_scale(self) -> None:
         self._scale_anchor_y = None

@@ -24,7 +24,8 @@ from render.renderer import Renderer2D
 
 class GLFWWindow:
     """
-    Ventana principal usando arquitectura B.
+    Ventana principal usando arquitectura B:
+    una sola escala compartida de precio.
     """
 
     def __init__(
@@ -82,6 +83,9 @@ class GLFWWindow:
             right_padding_px=100.0,
         )
 
+        # ─────────────────────────────────────────────
+        # Escala compartida (arquitectura B)
+        # ─────────────────────────────────────────────
         self.price_scale = LocalPriceScale(
             y_down=True,
             top_padding_px=7.0,
@@ -98,9 +102,11 @@ class GLFWWindow:
 
         # Datos
         self.live_feed: BinanceWSFeed | None = None
+
         if self.live_mode:
             print("[REST] Descargando histórico inicial...")
             rest = BinanceRESTFeed()
+
             try:
                 initial_data: list[OHLC] = rest.fetch_klines(
                     symbol=self.live_symbol,
@@ -113,14 +119,17 @@ class GLFWWindow:
                 initial_data = []
         else:
             initial_data = make_fake_ohlc(
-                400, start_price=100.0, volatility=1.2, seed=7
+                400,
+                start_price=100.0,
+                volatility=1.2,
+                seed=7,
             )
 
         self.series = CandleSeries(initial_data, style=style)
         self.time_scale.set_timestamps([c.ts for c in initial_data])
         self.series.reset_initial_spacing()
 
-        # Overlays
+        # overlays
         self.price_axis_overlay: PriceAxisOverlay | None = None
         self.time_axis_overlay: TimeAxisOverlay | None = None
         self.crosshair_overlay: CrosshairOverlay | None = None
@@ -142,8 +151,13 @@ class GLFWWindow:
         glfw.window_hint(glfw.SCALE_TO_MONITOR, glfw.TRUE)
 
         self.window = glfw.create_window(
-            self.width, self.height, self.title, None, None
+            self.width,
+            self.height,
+            self.title,
+            None,
+            None,
         )
+
         if not self.window:
             glfw.terminate()
             raise RuntimeError("No se pudo crear la ventana GLFW")
@@ -159,11 +173,14 @@ class GLFWWindow:
         font_path = str(project_root / "font" / "fonts_fft" / "Montserrat-Regular.ttf")
 
         self.text_renderer = TextRenderer(
-            font_path=font_path, font_size=11, width=fb_w, height=fb_h
+            font_path=font_path,
+            font_size=11,
+            width=fb_w,
+            height=fb_h,
         )
         self.text_renderer.init_gl()
 
-        # Overlays
+        # overlays
         self.price_axis_overlay = PriceAxisOverlay(
             overlay=self.chart_overlay,
             price_scale=self.price_scale,
@@ -181,11 +198,14 @@ class GLFWWindow:
         )
 
         self.time_axis_overlay = TimeAxisOverlay(
-            overlay=self.chart_overlay, time_scale=self.time_scale
+            overlay=self.chart_overlay,
+            time_scale=self.time_scale,
         )
 
         self.crosshair_overlay = CrosshairOverlay(
-            self.chart_overlay, self.input, self.series
+            self.chart_overlay,
+            self.input,
+            self.series,
         )
 
         self.grid_overlay = GridOverlay(
@@ -203,22 +223,23 @@ class GLFWWindow:
             style=TooltipStyle(show_timestamp=False),
         )
 
-        # Inyecciones
+        # inyectar text renderer / scale
         self.price_axis_overlay.text_renderer = self.text_renderer
         self.time_axis_overlay.text_renderer = self.text_renderer
+
         self.crosshair_overlay.text_renderer = self.text_renderer
         self.crosshair_overlay.price_scale = self.price_scale
 
-        # Orden de dibujo
+        # orden de dibujo
         self.chart.add_series(self.series, pane_name="main")
-        self.chart.add_overlay(self.chart_overlay, layer="base", pane_name="main")
-        self.chart.add_overlay(self.grid_overlay, layer="base", pane_name="main")
+        self.chart.add_overlay(self.chart_overlay,      layer="base",  pane_name="main")
+        self.chart.add_overlay(self.grid_overlay,       layer="base",  pane_name="main")
         self.chart.add_overlay(self.price_axis_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.time_axis_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.crosshair_overlay, layer="front", pane_name="main")
-        self.chart.add_overlay(self.tooltip_overlay, layer="front", pane_name="main")
+        self.chart.add_overlay(self.time_axis_overlay,  layer="front", pane_name="main")
+        self.chart.add_overlay(self.crosshair_overlay,  layer="front", pane_name="main")
+        self.chart.add_overlay(self.tooltip_overlay,    layer="front", pane_name="main")
 
-        # Callbacks
+        # callbacks
         glfw.set_cursor_pos_callback(self.window, self._on_cursor_pos)
         glfw.set_mouse_button_callback(self.window, self._on_mouse_button)
         glfw.set_framebuffer_size_callback(self.window, self._on_resize)
@@ -264,18 +285,35 @@ class GLFWWindow:
         y = max(0.0, fb_h - self._time_axis_height_px)
         return 0.0, y, w, self._time_axis_height_px
 
-    def _point_in_rect(self, px: float, py: float, rect: tuple[float, float, float, float]) -> bool:
+    def _point_in_rect(
+        self,
+        px: float,
+        py: float,
+        rect: tuple[float, float, float, float],
+    ) -> bool:
         x, y, w, h = rect
         return (x <= px <= x + w) and (y <= py <= y + h)
 
     def _mouse_over_chart(self) -> bool:
-        return self._point_in_rect(self.input.mouse.x, self.input.mouse.y, self._chart_rect())
+        return self._point_in_rect(
+            self.input.mouse.x,
+            self.input.mouse.y,
+            self._chart_rect(),
+        )
 
     def _mouse_over_price_axis(self) -> bool:
-        return self._point_in_rect(self.input.mouse.x, self.input.mouse.y, self._price_axis_rect())
+        return self._point_in_rect(
+            self.input.mouse.x,
+            self.input.mouse.y,
+            self._price_axis_rect(),
+        )
 
     def _mouse_over_time_axis(self) -> bool:
-        return self._point_in_rect(self.input.mouse.x, self.input.mouse.y, self._time_axis_rect())
+        return self._point_in_rect(
+            self.input.mouse.x,
+            self.input.mouse.y,
+            self._time_axis_rect(),
+        )
 
     def _update_layout_scales(self, fb_w: int, fb_h: int) -> None:
         self.chart_overlay.set_view(0, 0, fb_w, fb_h)
@@ -290,9 +328,13 @@ class GLFWWindow:
         self.price_scale.clear_manual_range()
 
         vr = self.time_scale.get_visible_range()
+
         if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
             self.price_scale.autoscale_from_provider(
-                vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.012
+                vr.start_idx,
+                vr.end_idx,
+                self.series.get_high_low,
+                pad_ratio=0.012,
             )
 
     # ─────────────────────────────────────────────────────────────
@@ -313,6 +355,7 @@ class GLFWWindow:
             if is_down:
                 if self._mouse_over_price_axis():
                     now = glfw.get_time()
+
                     if now - self._last_price_axis_click_time <= self._double_click_threshold:
                         self._reset_price_scale_to_default()
                         self._drag_mode = None
@@ -325,16 +368,23 @@ class GLFWWindow:
                     self.price_scale.start_scale(self.input.mouse.y)
 
                 elif self._mouse_over_time_axis():
-                    self._drag_mode = "time-zoom"   # ← Zoom arrastrando en Time Axis
+                    # Arrastrar el eje de tiempo = zoom horizontal.
+                    # Derecha: zoom in / Izquierda: zoom out.
+                    self._drag_mode = "time-zoom"
 
                 elif self._mouse_over_chart():
+                    # Arrastrar dentro del plot = pan horizontal.
                     self._drag_mode = "time-pan"
+
                 else:
                     self._drag_mode = None
+
             else:
                 if self._drag_mode == "price-scale":
                     self.price_scale.end_scale()
+
                 self._drag_mode = None
+
 
     # ─────────────────────────────────────────────────────────────
     # Update
@@ -345,32 +395,41 @@ class GLFWWindow:
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         self._update_layout_scales(fb_w, fb_h)
 
-        if self.input.mouse.left and self._drag_mode:
-            if self._drag_mode == "time-pan" and abs(self.input.mouse.dx) > 2.0:
+        # Drag interactions
+        if self.input.mouse.left:
+            if self._drag_mode == "time-pan" and abs(self.input.mouse.dx) > 0.0:
                 adjusted_dx = -self.input.mouse.dx * self._pan_sensitivity
                 self.time_scale.pan_by_pixels(adjusted_dx)
 
-            elif self._drag_mode == "time-zoom" and abs(self.input.mouse.dx) > 1.0:
+            elif self._drag_mode == "time-zoom" and abs(self.input.mouse.dx) > 0.0:
+                # Zoom horizontal desde el eje de tiempo.
+                # El ancla queda en la posición del mouse sobre el eje.
                 self.time_scale.zoom_by_drag(
                     anchor_x=self.input.mouse.x,
                     dx_px=self.input.mouse.dx,
                 )
 
-            elif self._drag_mode == "price-scale" and abs(self.input.mouse.dy) > 1.0:
+            elif self._drag_mode == "price-scale" and abs(self.input.mouse.dy) > 0.0:
                 self.price_scale.scale_to(self.input.mouse.y)
 
         # Autoscale compartido
         vr = self.time_scale.get_visible_range()
-        if vr.end_idx >= vr.start_idx and len(self.series.data) > 0 and not self._price_manual_mode:
-            self.price_scale.autoscale_from_provider(
-                vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.005
-            )
+
+        if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
+            if not self._price_manual_mode:
+                self.price_scale.autoscale_from_provider(
+                    vr.start_idx,
+                    vr.end_idx,
+                    self.series.get_high_low,
+                    pad_ratio=0.005,
+                )
 
     def _update_live_feed(self) -> None:
         if self.live_feed is None:
             return
 
         events = self.live_feed.poll_events(limit=300)
+
         if not events:
             return
 
@@ -416,9 +475,13 @@ class GLFWWindow:
 
         if changed and not self._price_manual_mode:
             vr = self.time_scale.get_visible_range()
+
             if vr.end_idx >= vr.start_idx and len(self.series.data) > 0:
                 self.price_scale.autoscale_from_provider(
-                    vr.start_idx, vr.end_idx, self.series.get_high_low, pad_ratio=0.005
+                    vr.start_idx,
+                    vr.end_idx,
+                    self.series.get_high_low,
+                    pad_ratio=0.005,
                 )
 
     # ─────────────────────────────────────────────────────────────
@@ -450,9 +513,14 @@ class GLFWWindow:
             ]
 
             y = 35.0
+
             for line in debug_text:
                 self.text_renderer.render_text(
-                    line, x=20.0, y=y, scale=1.05, color=(0.0, 0.0, 0.0, 0.98)
+                    line,
+                    x=20.0,
+                    y=y,
+                    scale=1.05,
+                    color=(0.0, 0.0, 0.0, 0.98),
                 )
                 y += 24.0
 
@@ -463,6 +531,7 @@ class GLFWWindow:
     # ─────────────────────────────────────────────────────────────
     def run(self) -> None:
         self.init()
+
         try:
             while not glfw.window_should_close(self.window):
                 self.input.begin_frame()

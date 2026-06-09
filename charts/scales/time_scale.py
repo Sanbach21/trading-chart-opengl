@@ -79,35 +79,33 @@ class TimeScale:
     def get_visible_range(self) -> VisibleRange:
         return self._visible
 
-    # ====================== ZOOM Y PAN ======================
-
-    def zoom_at_x(self, mouse_x: float, delta: float) -> None:
-        if self.total_bars <= 0:
+    # ====================== ZOOM POR DRAG (NinjaTrader Style) ======================
+    def zoom_by_drag(self, anchor_x: float, dx_px: float) -> None:
+        """Zoom arrastrando en el eje de tiempo (como NinjaTrader)"""
+        if self.total_bars <= 1 or abs(dx_px) < 1.0:
             return
 
-        old_spacing = self.bar_spacing
-        old_float_index = self._float_index_at_x(mouse_x)
+        zoom_factor = 1.0 + (dx_px * 0.008)   # derecha = zoom in
+        zoom_factor = max(0.4, min(zoom_factor, 2.5))
 
-        factor_zoom = 1.21
-        factor = factor_zoom if delta > 0 else 1.0 / factor_zoom
+        anchor_idx = self.x_to_index(anchor_x)
 
-        new_spacing = old_spacing * factor
-        self.bar_spacing = self._snap_to_nice_spacing(new_spacing)
+        current_spacing = self.bar_spacing
+        new_spacing = current_spacing * zoom_factor
+        new_spacing = max(self.min_bar_spacing, min(new_spacing, self.max_bar_spacing))
 
-        new_anchor = self.view_x + self.view_w - self.right_offset * self.bar_spacing
-        bars_from_last = self._last_data_index - old_float_index
-        target_x = new_anchor - bars_from_last * self.bar_spacing
+        if abs(new_spacing - current_spacing) > 0.01:
+            bars_from_anchor_to_right = (self._right_anchor_x() - anchor_x) / current_spacing
 
-        delta_px = float(mouse_x) - target_x
-        self.right_offset -= delta_px / self.bar_spacing
+            self.bar_spacing = new_spacing
+            self.right_offset = (self._last_data_index - anchor_idx) - bars_from_anchor_to_right
 
-        self._clamp_right_offset()
-        self._recalc_visible()
+            self._clamp_right_offset()
+            self._recalc_visible()
 
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
             return
-
         self.right_offset += dx_px / self.bar_spacing
         self._clamp_right_offset()
         self._recalc_visible()
@@ -122,15 +120,11 @@ class TimeScale:
         closest = min(nice_values, key=lambda x: abs(x - value))
         return _clamp(closest, self.min_bar_spacing, self.max_bar_spacing)
 
-    # ====================== TICKS DE TIEMPO ======================
-
     def get_tick_indices(
         self,
         min_spacing_px: float,
         extend_by_one: bool = False,
     ) -> List[int]:
-        """Genera ticks sincronizados con las velas + right_padding_px."""
-
         if not self._timestamps or self.total_bars == 0:
             return []
 
@@ -150,7 +144,6 @@ class TimeScale:
         indices: List[int] = []
         current = self._floor_time_to_step(start_ts, step_minutes)
 
-        # Límite con compensación para que el grid llegue casi hasta el padding
         right_edge_x = (self.view_x + self.view_w - self.right_padding_px) + (self.bar_spacing * 1.8)
 
         safety_steps = 500
@@ -198,7 +191,7 @@ class TimeScale:
             if abs(x_first - x_left) >= min_spacing_px:
                 result.insert(0, left_idx)
 
-        # Derecha - con margen para sincronizar con velas
+        # Derecha
         last_time = self._index_to_virtual_time(result[-1])
         right_time = last_time + timedelta(minutes=step_minutes)
         right_idx = self._time_to_virtual_index(right_time)
@@ -211,16 +204,14 @@ class TimeScale:
 
         return result
 
-    # ====================== HELPERS ======================
-
     def _choose_tick_step_minutes(self, visible_duration_sec: float) -> int:
-        if visible_duration_sec < 900:      # < 15 min
+        if visible_duration_sec < 900:
             return 1
-        if visible_duration_sec < 3600:     # < 1 hora
+        if visible_duration_sec < 3600:
             return 5
-        if visible_duration_sec < 10800:    # < 3 horas
+        if visible_duration_sec < 10800:
             return 10
-        if visible_duration_sec < 21600:    # < 6 horas
+        if visible_duration_sec < 21600:
             return 15
         return 30
 
@@ -232,28 +223,23 @@ class TimeScale:
     def _infer_seconds_per_bar(self) -> float:
         if len(self._timestamps) < 2:
             return 60.0
-
         diffs = []
         start = max(1, len(self._timestamps) - 50)
         for i in range(start, len(self._timestamps)):
             diff = (self._timestamps[i] - self._timestamps[i - 1]).total_seconds()
             if diff > 0:
                 diffs.append(diff)
-
         if not diffs:
             return 60.0
-
         diffs.sort()
         return diffs[len(diffs) // 2]
 
     def _time_to_virtual_index(self, ts: datetime) -> int:
         if not self._timestamps:
             return 0
-
         last_ts = self._timestamps[-1]
         if ts <= last_ts:
             return self._find_closest_index(ts)
-
         seconds_per_bar = max(1.0, self._infer_seconds_per_bar())
         extra_seconds = (ts - last_ts).total_seconds()
         extra_bars = int(round(extra_seconds / seconds_per_bar))
@@ -264,7 +250,6 @@ class TimeScale:
             return datetime.min
         if 0 <= index < self.total_bars:
             return self._timestamps[index]
-
         seconds_per_bar = max(1.0, self._infer_seconds_per_bar())
         extra_bars = index - (self.total_bars - 1)
         return self._timestamps[-1] + timedelta(seconds=extra_bars * seconds_per_bar)
@@ -272,10 +257,8 @@ class TimeScale:
     def _filter_indices_by_spacing(self, indices: List[int], min_spacing_px: float) -> List[int]:
         if min_spacing_px <= 0 or len(indices) <= 1:
             return indices
-
         filtered: List[int] = []
         last_x: float | None = None
-
         for i in indices:
             x = self.get_aligned_x(i)
             if last_x is None or abs(x - last_x) >= min_spacing_px:
@@ -286,7 +269,6 @@ class TimeScale:
     def _find_closest_index(self, target_ts: datetime) -> int:
         if not self._timestamps:
             return 0
-
         left, right = 0, len(self._timestamps) - 1
         while left <= right:
             mid = (left + right) // 2
@@ -296,19 +278,15 @@ class TimeScale:
                 left = mid + 1
             else:
                 right = mid - 1
-
         if left >= len(self._timestamps):
             return len(self._timestamps) - 1
         if left == 0:
             return 0
-
         before = self._timestamps[left - 1]
         after = self._timestamps[left]
         if abs((after - target_ts).total_seconds()) < abs((before - target_ts).total_seconds()):
             return left
         return left - 1
-
-    # ====================== INTERNOS ======================
 
     @property
     def _last_data_index(self) -> float:
@@ -335,11 +313,9 @@ class TimeScale:
         left_float = self._float_index_at_x(self.view_x)
         right_float = self._float_index_at_x(self.view_x + self.view_w)
 
-        start_idx = max(0, int(math.floor(min(left_float, right_float))) - 1)
-        end_idx = min(
-            self.total_bars - 1,
-            int(math.ceil(max(left_float, right_float))) + 1,
-        )
+        start_idx = max(0, int(math.floor(min(left_float, right_float))))
+        end_idx = min(self.total_bars - 1, int(math.ceil(max(left_float, right_float))))
+
 
         start_idx = min(start_idx, self.total_bars - 1)
         if end_idx < start_idx:
@@ -355,7 +331,6 @@ class TimeScale:
     def index_to_x(self, index: int | float) -> float:
         if self.total_bars <= 0:
             return self.view_x
-
         bars_from_last = self._last_data_index - float(index)
         x = self._right_anchor_x() - bars_from_last * self.bar_spacing
         x -= self.right_padding_px
@@ -371,7 +346,6 @@ class TimeScale:
         return max(1.0, self.bar_spacing)
 
     def get_right_draw_limit(self) -> float:
-        """Límite derecho donde terminan velas, grid y ticks"""
         return self.view_x + self.view_w - self.right_padding_px
 
     def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:

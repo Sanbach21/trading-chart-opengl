@@ -24,11 +24,11 @@ class InputState:
         self.keys_down: set[int] = set()
         self.mouse = MouseState()
 
-    def begin_frame(self) -> None:
+    def begin_frame(self) -> None: 
         # Reset deltas/scroll cada frame
-        self.mouse.dx = 0.0
+        self.mouse.dx = 0.0 
         self.mouse.dy = 0.0
-        self.mouse.scroll_y = 0.0
+        
 
     def set_key(self, key: int, is_down: bool) -> None:
         if is_down:
