@@ -350,7 +350,7 @@ class GLFWWindow:
                 adjusted_dx = -self.input.mouse.dx * self._pan_sensitivity
                 self.time_scale.pan_by_pixels(adjusted_dx)
 
-            elif self._drag_mode == "time-zoom" and abs(self.input.mouse.dx) > 1.0:
+            elif self._drag_mode == "time-zoom" and abs(self.input.mouse.dx) > 0.1:
                 self.time_scale.zoom_by_drag(
                     anchor_x=self.input.mouse.x,
                     dx_px=self.input.mouse.dx,

@@ -50,10 +50,9 @@ class TimeScale:
             self.right_offset = max(0.0, self.right_offset)
             return
 
-        min_offset = -(self.total_bars - 1) - 30
+        min_offset = -(self.total_bars - 1) - 40   # más margen
 
         if soft:
-            # Durante zoom permitimos un poco más de flexibilidad
             self.right_offset = max(min_offset, self.right_offset)
         else:
             self.right_offset = max(min_offset, self.right_offset)
@@ -88,15 +87,13 @@ class TimeScale:
 
     # ====================== ZOOM POR DRAG (NinjaTrader Style) ======================
     def zoom_by_drag(self, anchor_x: float, dx_px: float) -> None:
-        """Zoom con anclaje estable y menos jitter en el borde derecho"""
-        if self.total_bars <= 1 or abs(dx_px) < 0.8:
+        """Zoom anclado siempre a la VELA NÚMERO 2 (índice 1)"""
+        if self.total_bars < 3 or abs(dx_px) < 0.8:
             return
 
-        # Sensibilidad
-        zoom_factor = 1.0 + (dx_px * 0.011)
+        # Sensibilidad del zoom
+        zoom_factor = 1.0 + (dx_px * 0.011)      # ajusta si quieres más rápido/lento
         zoom_factor = max(0.35, min(zoom_factor, 3.5))
-
-        anchor_idx = self.x_to_index(anchor_x)
 
         old_spacing = float(self.bar_spacing)
         new_spacing = old_spacing * zoom_factor
@@ -105,19 +102,22 @@ class TimeScale:
         if abs(new_spacing - old_spacing) < 0.008:
             return
 
-        # === Cálculo mejorado del right_offset ===
-        right_anchor_x = self._right_anchor_x()
-        bars_from_anchor_to_right = (right_anchor_x - anchor_x) / old_spacing
+        # === ANCLAJE FIJO EN VELA NÚMERO 2 ===
+        anchor_idx = 1                          # ← Vela número 2 (índice 1)
+
+        # Calculamos cuántas barras hay desde la vela 2 hasta el borde derecho
+        bars_from_anchor_to_right = (self._right_anchor_x() - self.index_to_x(anchor_idx)) / old_spacing
 
         self.bar_spacing = new_spacing
 
-        # Mantener el anchor fijo + evitar clamp agresivo durante drag
+        # Recalculamos right_offset manteniendo fija la vela #2
         self.right_offset = (self._last_data_index - anchor_idx) - bars_from_anchor_to_right
 
-        # Clamp más suave durante zoom
-        self._clamp_right_offset(soft=True)
+        # Evitamos que las velas se escondan
+        self.right_padding_px = 4.0
 
-        self._recalc_visible()
+        self._clamp_right_offset(soft=True)
+        self._recalc_visible()    
 
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
