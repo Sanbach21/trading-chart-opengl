@@ -105,27 +105,26 @@ class TimeScale:
         if self.total_bars < 2 or abs(dx_px) < 0.5:
             return
 
-        zoom_factor = 1.0 + (dx_px * 0.011)
+        zoom_factor = 1.0 + dx_px * 0.011
         zoom_factor = max(0.35, min(zoom_factor, 3.5))
 
-        old_spacing = float(self.bar_spacing)
-        new_spacing = old_spacing * zoom_factor
-        new_spacing = _clamp(new_spacing, self.min_bar_spacing, self.max_bar_spacing)
+        old_spacing = self.bar_spacing
+        new_spacing = _clamp(old_spacing * zoom_factor, self.min_bar_spacing, self.max_bar_spacing)
 
         if abs(new_spacing - old_spacing) < 0.005:
             return
 
-        # Índice flotante bajo el mouse ANTES del zoom
-        anchor_index_before = self._float_index_at_x(anchor_x)
+        # índice bajo el mouse ANTES del zoom
+        idx_before = self._float_index_at_x(anchor_x)
 
-        # Aplicar nuevo spacing
+        # aplicar spacing
         self.bar_spacing = new_spacing
 
-        # Índice flotante bajo el mouse DESPUÉS del zoom
-        anchor_index_after = self._float_index_at_x(anchor_x)
+        # índice bajo el mouse DESPUÉS del zoom
+        idx_after = self._float_index_at_x(anchor_x)
 
-        # Ajustar offset para mantener el mismo índice bajo el mouse
-        self.right_offset += (anchor_index_after - anchor_index_before)
+        # corregir offset
+        self.right_offset += (idx_after - idx_before)
 
         self._clamp_right_offset()
         self._recalc_visible()
@@ -148,8 +147,9 @@ class TimeScale:
     def _last_data_index(self) -> float:
         return self.total_bars - 1.0
 
-    def _right_anchor_x(self) -> float:
-        return self.view_x + self.view_w - (self.right_offset * self.bar_spacing)
+    def _right_anchor_x(self):
+        return self.view_x + self.view_w
+
 
     def _float_index_at_x(self, x: float) -> float:
         if self.total_bars <= 0:
