@@ -30,27 +30,34 @@ class TimeScale:
         max_right_offset: float = 500.0,
         right_padding_px: float = 0.0,
     ) -> None:
+
         self.bar_spacing = float(bar_spacing)
         self.min_bar_spacing = float(min_bar_spacing)
         self.max_bar_spacing = float(max_bar_spacing)
-        self.right_offset = float(right_offset)
 
+        self.right_offset = float(right_offset)
         self.max_right_offset = float(max_right_offset)
+
+        # ⚠️ Padding NO se usa para posicionar velas
         self.right_padding_px = float(right_padding_px)
-        self.min_right_offset = -1_000_000.0
 
         self.total_bars: int = 0
         self.view_x: float = 0.0
         self.view_w: float = 1.0
+
         self._timestamps: List[datetime] = []
         self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
 
+    # -------------------------------------------------------------------------
+    # CLAMP CORREGIDO — evita que la primera vela desaparezca
+    # -------------------------------------------------------------------------
     def _clamp_right_offset(self, soft: bool = False) -> None:
         if self.total_bars <= 1:
             self.right_offset = max(0.0, self.right_offset)
             return
 
-        min_offset = -(self.total_bars - 1) - 40   # más margen
+        # ❗ La primera vela (índice 0) debe ser visible SIEMPRE
+        min_offset = -(self.total_bars - 1)
 
         if soft:
             self.right_offset = max(min_offset, self.right_offset)
@@ -59,6 +66,9 @@ class TimeScale:
 
         self.right_offset = min(self.max_right_offset, self.right_offset)
 
+    # -------------------------------------------------------------------------
+    # TIMESTAMPS
+    # -------------------------------------------------------------------------
     def set_timestamps(self, ts_list: List[datetime]) -> None:
         self._timestamps = ts_list[:]
         self.total_bars = len(ts_list)
@@ -77,6 +87,9 @@ class TimeScale:
         self._clamp_right_offset()
         self._recalc_visible()
 
+    # -------------------------------------------------------------------------
+    # VIEWPORT
+    # -------------------------------------------------------------------------
     def set_view(self, x: float, w: float) -> None:
         self.view_x = float(x)
         self.view_w = max(1.0, float(w))
@@ -85,47 +98,120 @@ class TimeScale:
     def get_visible_range(self) -> VisibleRange:
         return self._visible
 
-    # ====================== ZOOM POR DRAG (NinjaTrader Style) ======================
+    # -------------------------------------------------------------------------
+    # ZOOM ESTILO TRADINGVIEW — ANCLADO AL MOUSE
+    # -------------------------------------------------------------------------
     def zoom_by_drag(self, anchor_x: float, dx_px: float) -> None:
-        """Zoom anclado siempre a la VELA NÚMERO 2 (índice 1)"""
-        if self.total_bars < 3 or abs(dx_px) < 0.8:
+        if self.total_bars < 2 or abs(dx_px) < 0.5:
             return
 
-        # Sensibilidad del zoom
-        zoom_factor = 1.0 + (dx_px * 0.011)      # ajusta si quieres más rápido/lento
+        zoom_factor = 1.0 + (dx_px * 0.011)
         zoom_factor = max(0.35, min(zoom_factor, 3.5))
 
         old_spacing = float(self.bar_spacing)
         new_spacing = old_spacing * zoom_factor
-        new_spacing = max(self.min_bar_spacing, min(new_spacing, self.max_bar_spacing))
+        new_spacing = _clamp(new_spacing, self.min_bar_spacing, self.max_bar_spacing)
 
-        if abs(new_spacing - old_spacing) < 0.008:
+        if abs(new_spacing - old_spacing) < 0.005:
             return
 
-        # === ANCLAJE FIJO EN VELA NÚMERO 2 ===
-        anchor_idx = 1                          # ← Vela número 2 (índice 1)
+        # Índice flotante bajo el mouse ANTES del zoom
+        anchor_index_before = self._float_index_at_x(anchor_x)
 
-        # Calculamos cuántas barras hay desde la vela 2 hasta el borde derecho
-        bars_from_anchor_to_right = (self._right_anchor_x() - self.index_to_x(anchor_idx)) / old_spacing
-
+        # Aplicar nuevo spacing
         self.bar_spacing = new_spacing
 
-        # Recalculamos right_offset manteniendo fija la vela #2
-        self.right_offset = (self._last_data_index - anchor_idx) - bars_from_anchor_to_right
+        # Índice flotante bajo el mouse DESPUÉS del zoom
+        anchor_index_after = self._float_index_at_x(anchor_x)
 
-        # Evitamos que las velas se escondan
-        self.right_padding_px = 4.0
+        # Ajustar offset para mantener el mismo índice bajo el mouse
+        self.right_offset += (anchor_index_after - anchor_index_before)
 
-        self._clamp_right_offset(soft=True)
-        self._recalc_visible()    
+        self._clamp_right_offset()
+        self._recalc_visible()
 
+    # -------------------------------------------------------------------------
+    # PAN
+    # -------------------------------------------------------------------------
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
             return
+
         self.right_offset += dx_px / self.bar_spacing
         self._clamp_right_offset()
         self._recalc_visible()
 
+    # -------------------------------------------------------------------------
+    # HELPERS
+    # -------------------------------------------------------------------------
+    @property
+    def _last_data_index(self) -> float:
+        return self.total_bars - 1.0
+
+    def _right_anchor_x(self) -> float:
+        return self.view_x + self.view_w - (self.right_offset * self.bar_spacing)
+
+    def _float_index_at_x(self, x: float) -> float:
+        if self.total_bars <= 0:
+            return 0.0
+
+        return self._last_data_index - (
+            (self._right_anchor_x() - float(x)) / max(0.1, self.bar_spacing)
+        )
+
+    # -------------------------------------------------------------------------
+    # RECALC VISIBLE RANGE (CON FIX DE INDEXERROR)
+    # -------------------------------------------------------------------------
+    def _recalc_visible(self) -> None:
+        if self.total_bars <= 0 or not self._timestamps:
+            self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
+            return
+
+        self.bar_spacing = _clamp(self.bar_spacing, self.min_bar_spacing, self.max_bar_spacing)
+        self._clamp_right_offset()
+
+        left_float = self._float_index_at_x(self.view_x)
+        right_float = self._float_index_at_x(self.view_x + self.view_w)
+
+        start_idx = int(math.floor(min(left_float, right_float)))
+        end_idx   = int(math.ceil(max(left_float, right_float)))
+
+        # Clamp duro
+        start_idx = max(0, min(start_idx, self.total_bars - 1))
+        end_idx   = max(0, min(end_idx,   self.total_bars - 1))
+
+        if end_idx < start_idx:
+            end_idx = start_idx
+
+        self._visible = VisibleRange(
+            start_ts=self._timestamps[start_idx],
+            end_ts=self._timestamps[end_idx],
+            start_idx=start_idx,
+            end_idx=end_idx,
+        )
+
+    # -------------------------------------------------------------------------
+    # POSICIÓN DE VELAS
+    # -------------------------------------------------------------------------
+    def index_to_x(self, index: int | float) -> float:
+        if self.total_bars <= 0:
+            return self.view_x
+
+        bars_from_last = self._last_data_index - float(index)
+        x = self._right_anchor_x() - bars_from_last * self.bar_spacing
+
+        return x  # ❗ No restar padding
+
+    def x_to_index(self, x: float) -> int:
+        if self.total_bars <= 0:
+            return 0
+
+        idx = round(self._float_index_at_x(x))
+        return int(_clamp(idx, 0, self.total_bars - 1))
+
+    # -------------------------------------------------------------------------
+    # TICKS (RESTORED — Opción 1)
+    # -------------------------------------------------------------------------
     def _snap_to_nice_spacing(self, value: float) -> float:
         nice_values = [
             0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
@@ -141,6 +227,7 @@ class TimeScale:
         min_spacing_px: float,
         extend_by_one: bool = False,
     ) -> List[int]:
+
         if not self._timestamps or self.total_bars == 0:
             return []
 
@@ -191,12 +278,12 @@ class TimeScale:
         min_spacing_px: float,
         right_edge_x: float,
     ) -> List[int]:
+
         if not indices:
             return indices
 
         result = indices[:]
 
-        # Izquierda
         first_time = self._index_to_virtual_time(result[0])
         left_time = first_time - timedelta(minutes=step_minutes)
         left_idx = self._time_to_virtual_index(left_time)
@@ -207,7 +294,6 @@ class TimeScale:
             if abs(x_first - x_left) >= min_spacing_px:
                 result.insert(0, left_idx)
 
-        # Derecha
         last_time = self._index_to_virtual_time(result[-1])
         right_time = last_time + timedelta(minutes=step_minutes)
         right_idx = self._time_to_virtual_index(right_time)
@@ -303,61 +389,6 @@ class TimeScale:
         if abs((after - target_ts).total_seconds()) < abs((before - target_ts).total_seconds()):
             return left
         return left - 1
-
-    @property
-    def _last_data_index(self) -> float:
-        return self.total_bars - 1.0
-
-    def _right_anchor_x(self) -> float:
-        return self.view_x + self.view_w - self.right_offset * self.bar_spacing
-
-    def _float_index_at_x(self, x: float) -> float:
-        if self.total_bars <= 0:
-            return 0.0
-        return self._last_data_index - (
-            (self._right_anchor_x() - float(x)) / max(0.1, self.bar_spacing)
-        )
-
-    def _recalc_visible(self) -> None:
-        if self.total_bars <= 0 or not self._timestamps:
-            self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
-            return
-
-        self.bar_spacing = _clamp(self.bar_spacing, self.min_bar_spacing, self.max_bar_spacing)
-        self._clamp_right_offset()
-
-        left_float = self._float_index_at_x(self.view_x)
-        right_float = self._float_index_at_x(self.view_x + self.view_w)
-
-        start_idx = max(0, int(math.floor(min(left_float, right_float))))
-        end_idx = min(self.total_bars - 1, int(math.ceil(max(left_float, right_float))))
-
-
-        start_idx = min(start_idx, self.total_bars - 1)
-        if end_idx < start_idx:
-            end_idx = start_idx
-
-        self._visible = VisibleRange(
-            start_ts=self._timestamps[start_idx],
-            end_ts=self._timestamps[end_idx],
-            start_idx=start_idx,
-            end_idx=end_idx,
-        )
-
-    def index_to_x(self, index: int | float) -> float:
-        if self.total_bars <= 0:
-            return self.view_x
-        bars_from_last = self._last_data_index - float(index)
-        x = self._right_anchor_x() - bars_from_last * self.bar_spacing
-        x -= self.right_padding_px
-        return x
-
-    def x_to_index(self, x: float) -> int:
-        if self.total_bars <= 0:
-            return 0
-        idx = round(self._float_index_at_x(x))
-        return int(_clamp(idx, 0, self.total_bars - 1))
-
     def get_px_per_bar(self) -> float:
         return max(1.0, self.bar_spacing)
 
