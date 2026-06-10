@@ -1,5 +1,5 @@
 PROJECT STRUCTURE
-================================================================================================
+================================================================================
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\.gitignore
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\app
 C:\Users\ozzyj\OneDrive\Escritorio\Programacion\libreria_grafica_openGL\app\__init__.py
@@ -3817,7 +3817,7 @@ class TimeScale:
     def get_right_draw_limit(self) -> float:
         return self.view_x + self.view_w - self.right_padding_px
 
-    def get_aligned_x(self, index: int | float, crisp: bool = True) -> float:
+    def get_aligned_x(self, index: int | float, crisp: bool = True) -> float: # get aligned x with optional crisping
         x = float(self.index_to_x(index))
         if crisp:
             x = round(x) + 1.0
