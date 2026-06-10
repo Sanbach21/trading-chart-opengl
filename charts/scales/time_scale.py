@@ -28,7 +28,7 @@ class TimeScale:
         min_bar_spacing: float = 0.15,
         max_bar_spacing: float = 300.0,
         max_right_offset: float = 500.0,
-        right_padding_px: float = 10.0,
+        right_padding_px: float = 0.0,
     ) -> None:
         self.bar_spacing = float(bar_spacing)
         self.min_bar_spacing = float(min_bar_spacing)
@@ -45,12 +45,19 @@ class TimeScale:
         self._timestamps: List[datetime] = []
         self._visible = VisibleRange(datetime.min, datetime.min, 0, -1)
 
-    def _clamp_right_offset(self) -> None:
+    def _clamp_right_offset(self, soft: bool = False) -> None:
         if self.total_bars <= 1:
             self.right_offset = max(0.0, self.right_offset)
             return
 
-        self.right_offset = max(-(self.total_bars - 1) - 50, self.right_offset)
+        min_offset = -(self.total_bars - 1) - 30
+
+        if soft:
+            # Durante zoom permitimos un poco más de flexibilidad
+            self.right_offset = max(min_offset, self.right_offset)
+        else:
+            self.right_offset = max(min_offset, self.right_offset)
+
         self.right_offset = min(self.max_right_offset, self.right_offset)
 
     def set_timestamps(self, ts_list: List[datetime]) -> None:
@@ -81,27 +88,36 @@ class TimeScale:
 
     # ====================== ZOOM POR DRAG (NinjaTrader Style) ======================
     def zoom_by_drag(self, anchor_x: float, dx_px: float) -> None:
-        """Zoom arrastrando en el eje de tiempo (como NinjaTrader)"""
-        if self.total_bars <= 1 or abs(dx_px) < 1.0:
+        """Zoom con anclaje estable y menos jitter en el borde derecho"""
+        if self.total_bars <= 1 or abs(dx_px) < 0.8:
             return
 
-        zoom_factor = 1.0 + (dx_px * 0.008)   # derecha = zoom in
-        zoom_factor = max(0.4, min(zoom_factor, 2.5))
+        # Sensibilidad
+        zoom_factor = 1.0 + (dx_px * 0.011)
+        zoom_factor = max(0.35, min(zoom_factor, 3.5))
 
         anchor_idx = self.x_to_index(anchor_x)
 
-        current_spacing = self.bar_spacing
-        new_spacing = current_spacing * zoom_factor
+        old_spacing = float(self.bar_spacing)
+        new_spacing = old_spacing * zoom_factor
         new_spacing = max(self.min_bar_spacing, min(new_spacing, self.max_bar_spacing))
 
-        if abs(new_spacing - current_spacing) > 0.01:
-            bars_from_anchor_to_right = (self._right_anchor_x() - anchor_x) / current_spacing
+        if abs(new_spacing - old_spacing) < 0.008:
+            return
 
-            self.bar_spacing = new_spacing
-            self.right_offset = (self._last_data_index - anchor_idx) - bars_from_anchor_to_right
+        # === Cálculo mejorado del right_offset ===
+        right_anchor_x = self._right_anchor_x()
+        bars_from_anchor_to_right = (right_anchor_x - anchor_x) / old_spacing
 
-            self._clamp_right_offset()
-            self._recalc_visible()
+        self.bar_spacing = new_spacing
+
+        # Mantener el anchor fijo + evitar clamp agresivo durante drag
+        self.right_offset = (self._last_data_index - anchor_idx) - bars_from_anchor_to_right
+
+        # Clamp más suave durante zoom
+        self._clamp_right_offset(soft=True)
+
+        self._recalc_visible()
 
     def pan_by_pixels(self, dx_px: float) -> None:
         if self.total_bars <= 0:
