@@ -822,13 +822,13 @@ class GLFWWindow:
             min_bar_spacing=0.15,
             max_bar_spacing=300.0,
             max_right_offset=500.0,
-            right_padding_px=100.0,
+            right_padding_px=0.0,
         )
 
         self.price_scale = LocalPriceScale(
             y_down=True,
-            top_padding_px=7.0,
-            bottom_padding_px=7.0,
+            top_padding_px=9.0,
+            bottom_padding_px=9.0,
         )
 
         self.chart_overlay = ChartOverlay(
@@ -3846,56 +3846,94 @@ class CandleSeries:
     def get_high_low(self, i: int) -> Tuple[float, float]:
         d = self.data[i]
         return d.h, d.l
-
-    def _compute_gap(self, bar_spacing: float) -> float:
-        """
-        Gap dinámico entre velas.
-
-        - Zoom normal / zoom out: gap crece moderadamente.
-        - Zoom in fuerte: gap cae mucho e incluso puede solaparse un poco.
-        """
-        if self._initial_bar_spacing is None:
-            self._initial_bar_spacing = bar_spacing
-
-        base = max(self._initial_bar_spacing, 1.0)
-
-        if bar_spacing >= base * 0.9:
-            ratio = bar_spacing / base
-            gap = self.style.base_gap_px * (
-                1.0 + self.style.gap_growth_factor * (ratio - 1.0)
-            )
-            return max(self.style.min_gap_px, min(gap, self.style.max_gap_px))
-
-        progress = bar_spacing / base
-        gap = self.style.base_gap_px * (progress ** 1.6) * 2.5
-
-        # Permitimos un poco de solapamiento para zoom in extremo
-        return max(-2.0, gap)
-
+   # ============================================================
+    # ANCHO DINÁMICO DE VELA (con zonas A, B, C)
+    # ============================================================
     def _compute_bar_width(self, bar_spacing: float) -> float:
-        """
-        Ancho dinámico de la vela según el zoom horizontal.
-        """
         if self._initial_bar_spacing is None:
             self._initial_bar_spacing = bar_spacing
 
+        st = self.style
         base = max(self._initial_bar_spacing, 1.0)
         ratio = bar_spacing / base
 
-        width = self.style.base_candle_width_px * (
-            1.0 + self.style.width_growth_factor * (ratio - 1.0)
-        )
+        # ─────────────────────────────────────────────
+        # ZONA A — Zoom-out extremo
+        # ─────────────────────────────────────────────
+        if ratio < 0.55:
+            width = max(1.0, bar_spacing * 0.35)
 
+        # ─────────────────────────────────────────────
+        # ZONA B — Zoom normal
+        # ─────────────────────────────────────────────
+        elif ratio < 1.40:
+            smooth = ratio ** 0.85
+            width = st.base_candle_width_px * smooth
+
+        # ─────────────────────────────────────────────
+        # ZONA C — Zoom-in extremo
+        # ─────────────────────────────────────────────
+        else:
+            smooth = ratio ** 1.22
+            width = st.base_candle_width_px * smooth
+
+        # Limitar según gap
         gap = self._compute_gap(bar_spacing)
-        max_possible = max(self.style.min_width_px, bar_spacing - gap - 2.0)
+        max_possible = max(st.min_width_px, bar_spacing - gap - 2.0)
 
         width = max(
-            self.style.min_width_px,
-            min(width, self.style.max_width_px, max_possible),
+            st.min_width_px,
+            min(width, st.max_width_px, max_possible),
         )
 
-        # Redondeo fuerte para estabilidad visual
-        return float(round(width))
+        # ─────────────────────────────────────────────
+        # CORRECCIÓN PROFESIONAL: ancho PAR (even)
+        # ─────────────────────────────────────────────
+        w = int(round(width))
+        if w % 2 != 0:
+            w += 1  # forzar par
+        w = max(2, w)
+
+        return float(w) 
+
+    def _compute_gap(self, bar_spacing: float) -> float:
+        """
+        Gap dinámico entre velas según el zoom horizontal.
+        """
+
+        if self._initial_bar_spacing is None:
+            self._initial_bar_spacing = bar_spacing
+
+        st = self.style
+        base = max(self._initial_bar_spacing, 1.0)
+        ratio = bar_spacing / base
+
+        # ─────────────────────────────────────────────
+        # ZONA A — Zoom-out extremo
+        # ─────────────────────────────────────────────
+        if ratio < 0.55:
+            return max(0.0, bar_spacing * 0.15)
+
+        # ─────────────────────────────────────────────
+        # ZONA B — Zoom normal
+        # ─────────────────────────────────────────────
+        elif ratio < 1.40:
+            smooth = ratio ** 0.65
+            gap = st.base_gap_px * smooth
+            return max(st.min_gap_px, min(gap, st.max_gap_px))
+
+        # ─────────────────────────────────────────────
+        # ZONA C — Zoom-in extremo (CORREGIDA)
+        # ─────────────────────────────────────────────
+        else:
+            # Gap reducido para evitar huecos exagerados
+            # ratio=1.4 → gap ~ base_gap * 0.8
+            # ratio=2.0 → gap ~ base_gap * 0.55
+            # ratio=3.0 → gap ~ base_gap * 0.40
+            smooth = ratio ** -0.55
+            gap = st.base_gap_px * smooth
+            return max(st.min_gap_px, min(gap, st.max_gap_px))
+
 
     def _is_candle_visible_vertically(
         self,

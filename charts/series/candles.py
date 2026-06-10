@@ -74,24 +74,14 @@ class CandleSeries:
         base = max(self._initial_bar_spacing, 1.0)
         ratio = bar_spacing / base
 
-        # ─────────────────────────────────────────────
         # ZONA A — Zoom-out extremo
-        # ─────────────────────────────────────────────
         if ratio < 0.55:
             width = max(1.0, bar_spacing * 0.35)
 
-        # ─────────────────────────────────────────────
-        # ZONA B — Zoom normal
-        # ─────────────────────────────────────────────
-        elif ratio < 1.40:
-            smooth = ratio ** 0.85
-            width = st.base_candle_width_px * smooth
-
-        # ─────────────────────────────────────────────
-        # ZONA C — Zoom-in extremo
-        # ─────────────────────────────────────────────
+        # ZONA B y C — Zoom normal e in
         else:
-            smooth = ratio ** 1.22
+            # Usamos el mismo exponente para que sea coherente
+            smooth = ratio ** 0.90          # ← Puedes subir a 1.0 (lineal) o bajar a 0.75
             width = st.base_candle_width_px * smooth
 
         # Limitar según gap
@@ -103,15 +93,32 @@ class CandleSeries:
             min(width, st.max_width_px, max_possible),
         )
 
-        # ─────────────────────────────────────────────
-        # CORRECCIÓN PROFESIONAL: ancho PAR (even)
-        # ─────────────────────────────────────────────
+        # Forzar ancho par (mejor alineación)
         w = int(round(width))
         if w % 2 != 0:
-            w += 1  # forzar par
+            w += 1
         w = max(2, w)
 
-        return float(w) 
+        return float(w)
+
+    def _compute_gap(self, bar_spacing: float) -> float:
+        if self._initial_bar_spacing is None:
+            self._initial_bar_spacing = bar_spacing
+
+        st = self.style
+        base = max(self._initial_bar_spacing, 1.0)
+        ratio = bar_spacing / base
+
+        # ZONA A — Zoom-out extremo
+        if ratio < 0.55:
+            return max(0.0, bar_spacing * 0.15)
+
+        # ZONA B y C — Comportamiento coherente
+        else:
+            # Gap crece/reduce de forma más suave y simétrica con el ancho
+            smooth = ratio ** 0.60          # ← Ajusta este valor
+            gap = st.base_gap_px * smooth
+            return max(st.min_gap_px, min(gap, st.max_gap_px))
 
     def _compute_gap(self, bar_spacing: float) -> float:
         """

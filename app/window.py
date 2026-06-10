@@ -79,13 +79,13 @@ class GLFWWindow:
             min_bar_spacing=0.15,
             max_bar_spacing=300.0,
             max_right_offset=500.0,
-            right_padding_px=100.0,
+            right_padding_px=0.0,
         )
 
         self.price_scale = LocalPriceScale(
             y_down=True,
-            top_padding_px=7.0,
-            bottom_padding_px=7.0,
+            top_padding_px=9.0,
+            bottom_padding_px=9.0,
         )
 
         self.chart_overlay = ChartOverlay(
