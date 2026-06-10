@@ -202,6 +202,19 @@ class TimeScale:
 
         return x  # ❗ No restar padding
 
+    def index_to_x_adjusted(self, index: int | float, bar_width: float, zoom_threshold: float = 50.0) -> float:
+        """Ajusta X solo cuando hay zoom in (bar_spacing > threshold)"""
+        x = self.index_to_x(index)
+
+        if self.bar_spacing > zoom_threshold:
+            right_limit = self.get_right_draw_limit()
+            half = bar_width * 0.5
+
+            if x + half >= right_limit:
+                x = right_limit - half - 1.0
+
+        return x
+
     def x_to_index(self, x: float) -> int:
         if self.total_bars <= 0:
             return 0

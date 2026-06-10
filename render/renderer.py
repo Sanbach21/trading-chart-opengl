@@ -8,12 +8,13 @@ import numpy as np
 from OpenGL.GL import (
     GL_ARRAY_BUFFER, GL_BLEND, GL_DYNAMIC_DRAW, GL_FALSE, GL_FLOAT,
     GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA, GL_TRIANGLES, GL_LINES,
-    GL_VERTEX_SHADER, GL_FRAGMENT_SHADER,
+    GL_VERTEX_SHADER, GL_FRAGMENT_SHADER, GL_SCISSOR_TEST,
     glBindBuffer, glBindVertexArray, glBlendFunc, glBufferData,
     glDeleteBuffers, glDeleteProgram, glDeleteVertexArrays,
     glDrawArrays, glEnable, glEnableVertexAttribArray,
     glGenBuffers, glGenVertexArrays, glGetUniformLocation,
     glUniform2f, glUseProgram, glVertexAttribPointer,
+    glScissor, glDisable,
 )
 
 from render.gl_utils import compile_shader, link_program
@@ -206,3 +207,12 @@ class Renderer2D:
 
         self._tri_verts.clear()
         self._line_verts.clear()
+
+    def enable_scissor_test(self, x: int, y: int, w: int, h: int) -> None:
+        """Activa el clipping del GPU (scissor test) para un rectángulo."""
+        glEnable(GL_SCISSOR_TEST)
+        glScissor(x, self._height - y - h, w, h)
+
+    def disable_scissor_test(self) -> None:
+        """Desactiva el clipping del GPU."""
+        glDisable(GL_SCISSOR_TEST)

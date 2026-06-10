@@ -193,6 +193,19 @@ class CandleSeries:
 
         right_limit = time_scale.get_right_draw_limit()
 
+        # Activar clipping del GPU (scissor test)
+        if st.clip_to_plot:
+            try:
+                plot_x, plot_y, plot_w, plot_h = price_scale.get_viewport()
+                renderer.enable_scissor_test(
+                    int(plot_x),
+                    int(plot_y),
+                    int(plot_w),
+                    int(plot_h)
+                )
+            except Exception:
+                pass
+
         for i in range(visible_start, visible_end + 1):
             if i < 0 or i >= len(self.data):
                 continue
@@ -202,19 +215,19 @@ class CandleSeries:
             # ============================================================
             # CENTRO REAL DE LA VELA (sin jitter)
             # ============================================================
-            x_center = float(time_scale.index_to_x(i)) + float(st.x_offset_px)
+            x_center = float(time_scale.index_to_x_adjusted(i, bar_width)) + float(st.x_offset_px) 
 
             # Alineamiento suave estilo TradingView
             x_center = float(int(x_center) + 0.5)
 
-            # Si está fuera por la derecha, cortar
-            if x_center > right_limit + 2.0:
+            # Si está fuera por la derecha (considerando ancho de vela), cortar
+            half = bar_width * 0.5
+            if x_center - half > right_limit:
                 break
 
             # ============================================================
             # CÁLCULO DE LADOS CENTRADOS
             # ============================================================
-            half = bar_width * 0.5
             left = x_center - half
             right = x_center + half
 
@@ -226,17 +239,10 @@ class CandleSeries:
             y_h = float(price_scale.price_to_y(float(d.h)))
             y_l = float(price_scale.price_to_y(float(d.l)))
 
-            # clipping vertical
-            if st.clip_to_plot:
-                try:
-                    plot_x, plot_y, plot_w, plot_h = price_scale.get_viewport()
-                except Exception:
-                    plot_y = 0.0
-                    plot_h = 10_000.0
-
-                if not self._is_candle_visible_vertically(y_h, y_l, plot_y, plot_h):
-                    continue
-
+            # Solo verificar si está completamente fuera verticalmente
+            if not self._is_candle_visible_vertically(y_h, y_l, price_scale.get_viewport()[1], price_scale.get_viewport()[3]):
+                continue
+                    
             # ============================================================
             # COLORES
             # ============================================================
@@ -300,3 +306,7 @@ class CandleSeries:
                 # vertical izquierdo / derecho
                 renderer.draw_line_px(left, body_top, left, body_bottom, st.border_color, bw)
                 renderer.draw_line_px(right, body_top, right, body_bottom, st.border_color, bw)
+
+        # Desactivar clipping del GPU
+        if st.clip_to_plot:
+            renderer.disable_scissor_test()
